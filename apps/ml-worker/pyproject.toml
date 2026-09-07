@@ -1,0 +1,79 @@
+[project]
+name = "minnegela-ml"
+version = "0.0.1"
+description = "Minnegela ML worker: faces, CLIP, identity matching, event clustering (WBS)."
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "numpy>=1.26,<3",
+  "psycopg[binary,pool]>=3.2",
+  "pgvector>=0.3",
+  "boto3>=1.34",
+  "pillow>=10",
+  "scikit-learn>=1.4",
+  "scipy>=1.12",
+  "pydantic-settings>=2.3",
+  "uvicorn>=0.30",
+  "starlette>=0.38",
+  "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+# Installed on the GPU box only (`uv sync --extra ml`). Pascal (GTX 1060/1080, sm_61) is dropped by
+# PyTorch wheels built for CUDA 12.8+, so torch is pinned to the cu126 index below. Everything runs fp32.
+ml = [
+  "torch==2.6.0",
+  "torchvision==0.21.0",
+  "open_clip_torch>=2.24",
+  "insightface>=0.7.3",
+  "onnxruntime-gpu>=1.17,<1.20",
+  "opencv-python-headless>=4.9",
+]
+# CPU fallback for development boxes without a GPU (`uv sync --extra ml-cpu`).
+ml-cpu = [
+  "torch==2.6.0",
+  "torchvision==0.21.0",
+  "open_clip_torch>=2.24",
+  "insightface>=0.7.3",
+  "onnxruntime>=1.17",
+  "opencv-python-headless>=4.9",
+]
+
+[project.scripts]
+minnegela-ml = "minnegela_ml.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-timeout>=2.3"]
+
+[tool.uv]
+conflicts = [[{ extra = "ml" }, { extra = "ml-cpu" }]]
+
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = [
+  { index = "pytorch-cu126", extra = "ml" },
+  { index = "pytorch-cpu", extra = "ml-cpu" },
+]
+torchvision = [
+  { index = "pytorch-cu126", extra = "ml" },
+  { index = "pytorch-cpu", extra = "ml-cpu" },
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["minnegela_ml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+timeout = 120

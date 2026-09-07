@@ -1,0 +1,68 @@
+name: ci
+on:
+  push: { branches: [main] }
+  pull_request:
+jobs:
+  node:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_DB: minnegela, POSTGRES_USER: minnegela, POSTGRES_PASSWORD: minnegela }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U minnegela" --health-interval 5s --health-timeout 3s --health-retries 20
+      minio:
+        image: bitnami/minio:latest
+        env: { MINIO_ROOT_USER: minnegela, MINIO_ROOT_PASSWORD: minnegela-dev-secret, MINIO_DEFAULT_BUCKETS: minnegela-media }
+        ports: ['9000:9000']
+    env:
+      DATABASE_URL_ADMIN: postgres://minnegela:minnegela@localhost:5432/minnegela
+      DATABASE_URL: postgres://minnegela_api:minnegela@localhost:5432/minnegela
+      DATABASE_URL_WORKER: postgres://minnegela_worker:minnegela@localhost:5432/minnegela
+      S3_ENDPOINT: http://localhost:9000
+      S3_BUCKET: minnegela-media
+      S3_REGION: auto
+      S3_ACCESS_KEY_ID: minnegela
+      S3_SECRET_ACCESS_KEY: minnegela-dev-secret
+      S3_FORCE_PATH_STYLE: 'true'
+      BETTER_AUTH_SECRET: ci-secret-ci-secret-ci-secret-ci
+      API_URL: http://localhost:4000
+      WEB_URL: http://localhost:3000
+      NEXT_PUBLIC_API_URL: http://localhost:4000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+      - run: pnpm typecheck
+      - run: pnpm build
+      - run: pnpm test
+  python:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env: { POSTGRES_DB: minnegela, POSTGRES_USER: minnegela, POSTGRES_PASSWORD: minnegela }
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U minnegela" --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL_ADMIN: postgres://minnegela:minnegela@localhost:5432/minnegela
+      DATABASE_URL_WORKER: postgres://minnegela_worker:minnegela@localhost:5432/minnegela
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - uses: astral-sh/setup-uv@v5
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:migrate
+      - run: cd apps/ml-worker && uv sync && uv run pytest -q
+  # The CUDA smoke job (§25) runs on the GPU box as a self-hosted runner, not here:
+  # cd apps/ml-worker && uv sync --extra ml && uv run minnegela-ml smoke

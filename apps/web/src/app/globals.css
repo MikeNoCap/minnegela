@@ -1,0 +1,80 @@
+@import "tailwindcss";
+
+:root {
+  color-scheme: light dark;
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --ink: #17181c;
+  --ink-2: #4b4e57;
+  --ink-3: #82858f;
+  --line: #e2e3e8;
+  --accent: #4a3fb0;
+  --accent-soft: #ebe9fb;
+  --amber: #b7791f;
+  --amber-soft: #fbf1dd;
+  --danger: #b3261e;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111216;
+    --surface: #1a1b21;
+    --ink: #eceef2;
+    --ink-2: #b6b9c4;
+    --ink-3: #7f8390;
+    --line: #2a2c35;
+    --accent: #a199f2;
+    --accent-soft: #272a4a;
+    --amber: #e0a94a;
+    --amber-soft: #3a2f1a;
+    --danger: #ff7b72;
+  }
+}
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-ink: var(--ink);
+  --color-ink-2: var(--ink-2);
+  --color-ink-3: var(--ink-3);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-danger: var(--danger);
+}
+html, body { background: var(--bg); color: var(--ink); }
+body { font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 14px; line-height: 1.45; -webkit-font-smoothing: antialiased; }
+a { color: inherit; }
+button, input, select, textarea { font: inherit; color: inherit; }
+img { display: block; }
+.tile { background: color-mix(in srgb, var(--surface), var(--ink) 6%); }
+.tile img { transition: opacity .2s; }
+.chip { display: inline-flex; align-items: center; gap: .3rem; padding: .1rem .5rem; border-radius: 999px; font-size: 12px; border: 1px solid var(--line); background: var(--surface); }
+.btn { display: inline-flex; align-items: center; gap: .35rem; padding: .35rem .7rem; border-radius: .45rem; border: 1px solid var(--line); background: var(--surface); font-size: 13px; cursor: pointer; }
+.btn:hover { border-color: var(--ink-3); }
+.btn-primary { background: var(--accent); color: white; border-color: var(--accent); }
+.btn-primary:hover { filter: brightness(1.08); border-color: var(--accent); }
+.btn-danger { color: var(--danger); }
+.input { padding: .4rem .6rem; border: 1px solid var(--line); border-radius: .45rem; background: var(--surface); width: 100%; }
+.input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: .6rem; }
+.probably { position: absolute; left: .3rem; bottom: .3rem; padding: 0 .4rem; border-radius: 999px; font-size: 11px; background: var(--amber-soft); color: var(--amber); opacity: 0; transition: opacity .15s; pointer-events: none; }
+.tile:hover .probably, .tile:focus-within .probably { opacity: 1; }
+@media (hover: none) { .probably { opacity: .9; } }
+.mosaic { display: grid; grid-template-columns: 2fr 1fr; grid-template-rows: 1fr 1fr; gap: 2px; aspect-ratio: 16/10; overflow: hidden; border-radius: .5rem .5rem 0 0; }
+.mosaic > :first-child { grid-row: 1 / span 2; }
+.mosaic.n1 { grid-template-columns: 1fr; }
+.mosaic.n1 > :first-child { grid-row: 1 / span 2; }
+.mosaic.n2 { grid-template-columns: 1fr 1fr; }
+.mosaic.n2 > * { grid-row: 1 / span 2; }
+.mosaic.n3 > :nth-child(3) { grid-row: 2; }
+.grid-media { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); grid-auto-rows: 140px; grid-auto-flow: dense; gap: 4px; }
+@media (min-width: 1024px) { .grid-media { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); grid-auto-rows: 170px; } }
+.grid-media .wide { grid-column: span 2; }
+.grid-media .tall { grid-row: span 2; }
+.rail { position: sticky; top: 4rem; align-self: start; }
+.viewer { position: fixed; inset: 0; background: rgba(8, 8, 10, .96); z-index: 50; display: grid; grid-template-columns: 1fr 320px; color: #eceef2; }
+@media (max-width: 800px) { .viewer { grid-template-columns: 1fr; grid-template-rows: 1fr auto; } }
+.banner { background: var(--accent-soft); color: var(--accent); padding: .35rem .75rem; border-radius: .45rem; font-size: 13px; }
+dialog { border: 1px solid var(--line); border-radius: .7rem; background: var(--surface); color: var(--ink); padding: 1.1rem; max-width: 30rem; }
+dialog::backdrop { background: rgba(0,0,0,.45); }

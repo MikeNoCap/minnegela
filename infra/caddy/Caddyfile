@@ -1,0 +1,13 @@
+# Phases 0-2: reachable over Tailscale only. Replace :80 with the public domain
+# and let Caddy fetch certificates when the box goes public.
+:80 {
+  encode zstd gzip
+  header Cache-Control "private"
+
+  handle /v1/* {
+    reverse_proxy api:4000
+  }
+  handle {
+    reverse_proxy web:3000
+  }
+}

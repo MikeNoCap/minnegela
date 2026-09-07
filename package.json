@@ -1,0 +1,36 @@
+{
+  "name": "minnegela",
+  "private": true,
+  "packageManager": "pnpm@10.0.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "typecheck": "turbo run typecheck",
+    "lint": "turbo run lint",
+    "test": "turbo run test",
+    "db:migrate": "pnpm --filter @minnegela/db migrate",
+    "db:seed": "pnpm --filter @minnegela/db seed",
+    "infra:up": "podman compose -f infra/compose.yml -f infra/compose.dev.yml up -d postgres minio minio-init",
+    "infra:down": "podman compose -f infra/compose.yml -f infra/compose.dev.yml down"
+  },
+  "devDependencies": {
+    "turbo": "^2.10.12",
+    "typescript": "^5.9.3",
+    "@types/node": "^24.0.0",
+    "vitest": "^5.0.0",
+    "tsx": "^4.23.13"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild",
+      "sharp",
+      "@tailwindcss/oxide",
+      "unrs-resolver",
+      "protobufjs",
+      "better-sqlite3"
+    ]
+  }
+}

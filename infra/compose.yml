@@ -1,0 +1,94 @@
+# Production stack: one box, Tailscale in front, Cloudflare R2 for media.
+# Usage: podman compose -f infra/compose.yml up -d --build   (docker compose works identically)
+name: minnegela
+
+services:
+  postgres:
+    image: docker.io/pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: minnegela
+      POSTGRES_USER: minnegela
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-minnegela}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./postgres/initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U minnegela -d minnegela"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    shm_size: 512mb
+
+  api:
+    build: { context: .., dockerfile: apps/api/Dockerfile }
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgres://minnegela_api:${POSTGRES_PASSWORD:-minnegela}@postgres:5432/minnegela
+      DATABASE_URL_ADMIN: postgres://minnegela:${POSTGRES_PASSWORD:-minnegela}@postgres:5432/minnegela
+      API_PORT: "4000"
+      ML_TEXT_EMBED_URL: http://ml-worker:4100/embed-text
+    depends_on:
+      postgres: { condition: service_healthy }
+    expose: ["4000"]
+
+  web:
+    build: { context: .., dockerfile: apps/web/Dockerfile }
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      API_URL: http://api:4000
+    depends_on: [api]
+    expose: ["3000"]
+
+  media-worker:
+    build: { context: .., dockerfile: apps/media-worker/Dockerfile }
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL_WORKER: postgres://minnegela_worker:${POSTGRES_PASSWORD:-minnegela}@postgres:5432/minnegela
+      WORKER_CACHE_DIR: /cache
+    volumes:
+      - worker-cache:/cache
+    depends_on:
+      postgres: { condition: service_healthy }
+    # NVENC for video transcodes. Comment out on a box without an NVIDIA GPU.
+    devices:
+      - nvidia.com/gpu=all
+
+  ml-worker:
+    build: { context: .., dockerfile: apps/ml-worker/Dockerfile }
+    restart: unless-stopped
+    env_file: ../.env
+    environment:
+      DATABASE_URL_WORKER: postgres://minnegela_worker:${POSTGRES_PASSWORD:-minnegela}@postgres:5432/minnegela
+      WORKER_CACHE_DIR: /cache
+      ML_DEVICE: ${ML_DEVICE:-cuda}
+      MODEL_DIR: /models
+    volumes:
+      - worker-cache:/cache
+      - ml-models:/models
+    depends_on:
+      postgres: { condition: service_healthy }
+    expose: ["4100"]
+    # Pascal GPU (GTX 1060/1080): fp32 only, pinned torch cu126 wheel (see Dockerfile).
+    devices:
+      - nvidia.com/gpu=all
+
+  caddy:
+    image: docker.io/library/caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [api, web]
+
+volumes:
+  pgdata:
+  worker-cache:
+  ml-models:
+  caddy-data:
+  caddy-config:
