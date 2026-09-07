@@ -54,11 +54,11 @@ Built and verified on a dev laptop against Postgres + MinIO in podman:
 | Piece | State |
 |---|---|
 | `packages/db` | Schema from §11 as SQL migrations 0000–0003 (triggers for `person_ids`/`contributor_ids`, RLS with `api`/`worker` roles, `ml` schema for embeddings), Drizzle mirror, `withViewer` + `visibleEvents/visibleAssets`, jobs queue. 11 tests: the six-branch visibility fixture through RLS and through the explicit predicate. |
-| `apps/api` | All §21 routes (49 paths), Better Auth magic link + bearer, presigned R2/MinIO URLs, deterministic search parser, CLIP text ranking via the ML worker. 25 tests incl. a visibility walk of every read route per member. |
+| `apps/api` | All §21 routes (50 paths), Better Auth magic link (web) + email code (phone) + bearer, presigned R2/MinIO URLs, deterministic search parser, CLIP text ranking via the ML worker. 26 tests incl. a visibility walk of every read route per member. |
 | `apps/media-worker` | derive (photo + video), dedupe, titles, places, reconcile, hard delete, export. 22 tests. |
 | `apps/cli` | Folder importer speaking the phone protocol; verified end to end (13 files → previews + originals → derive). |
-| `apps/ml-worker` | Queue consumer, analyze/identify/recluster, WBS in numpy, text-embed endpoint. 22 tests (WBS, matching, queue, recluster against Postgres). Model code paths untested until the GPU box has drivers. |
+| `apps/ml-worker` | Queue consumer, analyze/identify/recluster, WBS in numpy, text-embed endpoint. 23 tests (WBS, matching, queue, recluster and consent withdrawal against Postgres). Model code paths untested until the GPU box has drivers. |
 | `apps/web` | Login, home river, search with chips, event page (moments, tiers, who-can-see, open/close, tags, split/merge/exclude), people, review queue, timeline, group/status. Builds; not yet exercised against live data. |
-| `apps/mobile` | Not started (Phase 1 tasks 16–17). |
+| `apps/mobile` | Expo SDK 57 dev-client sync app: email-code sign-in, group join, permissions, face enrollment, sync policy, SQLite index, bounded sync loop with background uploads, library rules, privacy dashboard, group page. 28 tests on the pure logic; native paths need a device build (`eas build --profile development`). |
 
 Next: run Phase 0 on the real server (NVIDIA driver, `uv sync --extra ml`, `minnegela-ml check-models`), import a real folder with the CLI, judge the events, tune `packages/shared/src/constants.ts`.

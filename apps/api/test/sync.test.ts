@@ -58,9 +58,10 @@ describe.skipIf(!HAS_DB)('sync protocol', () => {
     // B cannot complete A's asset
     expect((await app.inject({ method: 'POST', url: `/v1/assets/${r1.assetId}/complete`, headers: auth(tokenB), payload: { kind: 'preview', sha256, bytes: JPEG.length } })).statusCode).toBe(404);
 
-    // after the preview exists, the manifest answers skip
+    // after the preview exists, the manifest asks for the original (policy-gated on the phone); nothing else to do
     const m3 = await app.inject({ method: 'POST', url: `/v1/groups/${groupId}/sync/manifest`, headers: auth(tokenA), payload: { deviceId: devA, assets: [item('ph-1')] } });
-    expect(m3.json().results[0].action).toBe('skip');
+    expect(m3.json().results[0].action).toBe('want_original');
+    expect(m3.json().results[0].upload).toBeUndefined();
 
     // A's own second copy of the same bytes: skipped, points at the same blob
     const mA2 = await app.inject({ method: 'POST', url: `/v1/groups/${groupId}/sync/manifest`, headers: auth(tokenA), payload: { deviceId: devA, assets: [item('ph-copy')] } });

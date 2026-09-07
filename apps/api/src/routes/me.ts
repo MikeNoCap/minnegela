@@ -2,7 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { AppContext } from '../app.js';
-import { withViewer, enqueue, groups, sql } from '../deps.js';
+import { withViewer, enqueue, groups, users, sql } from '../deps.js';
 import { audit } from '../audit.js';
 
 export async function meRoutes(app: FastifyInstance, ctx: AppContext) {
@@ -19,6 +19,16 @@ export async function meRoutes(app: FastifyInstance, ctx: AppContext) {
       user: { id: user.id, email: user.email, displayName: user.displayName },
       groups: memberships.map((m) => ({ id: m.groupId, name: groupRows.find((g) => g.id === m.groupId)?.name ?? '', role: m.role, personId: m.personId, consentFacesAt: m.consentFacesAt })),
     };
+  });
+
+  /** Profile edits. Code sign-in from the phone creates the user without a name; the app sets it here. */
+  r.patch('/v1/me', { schema: { body: z.object({ displayName: z.string().trim().min(1).max(80).optional(), birthday: z.string().date().nullable().optional() }) } }, async (req) => {
+    const user = req.requireUser();
+    const set: Partial<{ displayName: string; birthday: string | null; updatedAt: Date }> = { updatedAt: new Date() };
+    if (req.body.displayName !== undefined) set.displayName = req.body.displayName;
+    if (req.body.birthday !== undefined) set.birthday = req.body.birthday;
+    await ctx.db.update(users).set(set).where(sql`${users.id} = ${user.id}::uuid`);
+    return { id: user.id, email: user.email, displayName: set.displayName ?? user.displayName, birthday: req.body.birthday ?? null };
   });
 
   /** Account deletion: recorded with a 7-day grace; the hard delete is an ops job (see README). */

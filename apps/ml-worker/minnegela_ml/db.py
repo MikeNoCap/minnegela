@@ -52,3 +52,16 @@ def ping() -> bool:
         return True
     except Exception:
         return False
+
+
+def vec(value) -> "np.ndarray | None":
+    """pgvector >= 0.5 hands back `Vector` objects, older versions numpy arrays, and text-mode rows strings.
+    Normalise every embedding read to a float32 numpy array (or None)."""
+    import numpy as np
+    if value is None:
+        return None
+    if hasattr(value, "to_numpy"):
+        return np.asarray(value.to_numpy(), dtype=np.float32)
+    if isinstance(value, str):
+        return np.asarray([float(x) for x in value.strip("[]").split(",")], dtype=np.float32)
+    return np.asarray(value, dtype=np.float32)

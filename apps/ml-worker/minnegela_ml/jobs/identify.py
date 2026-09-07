@@ -6,6 +6,8 @@ from collections import defaultdict
 
 import numpy as np
 
+from minnegela_ml.db import vec
+
 from .. import db
 from ..constants import FACE_MATCH
 from ..matching import TIER_RANK, cluster_unknown, compute_prototypes, match_face
@@ -29,11 +31,19 @@ def _eligible_persons(conn, group_id: str) -> dict[int, dict]:
 def rebuild_prototypes(conn, group_id: str, person_ids: list[int] | None = None) -> dict[int, np.ndarray]:
     eligible = _eligible_persons(conn, group_id)
     targets = list(eligible) if person_ids is None else [p for p in person_ids if p in eligible]
-    # drop prototypes of persons that lost eligibility
-    conn.execute(
-        "delete from ml.person_prototypes pp using persons p where p.id = pp.person_id and p.group_id = %s and not (p.id = any(%s::int[]))",
-        (group_id, list(eligible)),
-    )
+    # Persons that lost eligibility (a member withdrew face consent, §18.4): drop prototypes, labels and
+    # every person_id assignment. Detections stay as anonymous boxes; the triggers shrink person_ids arrays.
+    ineligible = [
+        r["id"]
+        for r in conn.execute("select id from persons where group_id = %s and not (id = any(%s::int[]))", (group_id, list(eligible) or [-1])).fetchall()
+    ]
+    if ineligible:
+        conn.execute("delete from ml.person_prototypes where person_id = any(%s::int[])", (ineligible,))
+        conn.execute("delete from face_labels where person_id = any(%s::int[])", (ineligible,))
+        conn.execute(
+            "update faces set person_id = null, tier = null, match_score = null, match_source = null where group_id = %s and person_id = any(%s::int[])",
+            (group_id, ineligible),
+        )
     out: dict[int, np.ndarray] = {}
     for pid in targets:
         rows = conn.execute(
@@ -46,7 +56,7 @@ def rebuild_prototypes(conn, group_id: str, person_ids: list[int] | None = None)
             """,
             (group_id, pid, pid, pid),
         ).fetchall()
-        embs = np.stack([np.asarray(r["emb"], dtype=np.float32) for r in rows]) if rows else np.zeros((0, 512), dtype=np.float32)
+        embs = np.stack([vec(r["emb"]) for r in rows]) if rows else np.zeros((0, 512), dtype=np.float32)
         protos = compute_prototypes(embs)
         conn.execute("delete from ml.person_prototypes where person_id = %s", (pid,))
         for i, p in enumerate(protos):
@@ -63,7 +73,7 @@ def load_prototypes(conn, group_id: str) -> dict[int, np.ndarray]:
     ).fetchall()
     by: dict[int, list] = defaultdict(list)
     for r in rows:
-        by[r["person_id"]].append(np.asarray(r["emb"], dtype=np.float32))
+        by[r["person_id"]].append(vec(r["emb"]))
     return {pid: np.stack(v) for pid, v in by.items()}
 
 
@@ -122,7 +132,7 @@ def match_scope(conn, group_id: str, prototypes: dict[int, np.ndarray], blob_id:
             pid = sorted(lab["confirm"])[0]
             new = (pid, "confirmed", "label", None)
         else:
-            cand = match_face(np.asarray(f["emb"], dtype=np.float32), prototypes,
+            cand = match_face(vec(f["emb"]), prototypes,
                               rejected=lab["reject"] if lab else set(),
                               context_persons=context.get(str(f["blob_id"]), set()),
                               quality_flags=list(f["quality_flags"] or []))
@@ -154,7 +164,7 @@ def cluster_unknown_faces(conn, group_id: str) -> int:
         (group_id,),
     ).fetchall()
     ids = [str(r["id"]) for r in rows]
-    embs = np.stack([np.asarray(r["emb"], dtype=np.float32) for r in rows]) if rows else np.zeros((0, 512), dtype=np.float32)
+    embs = np.stack([vec(r["emb"]) for r in rows]) if rows else np.zeros((0, 512), dtype=np.float32)
     groups = cluster_unknown(embs)
     existing = conn.execute("select id, face_ids, dismissed from unknown_clusters where group_id = %s", (group_id,)).fetchall()
     kept: set[str] = set()

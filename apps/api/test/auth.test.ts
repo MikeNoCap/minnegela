@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { sql } from '@minnegela/db';
 import { HAS_DB, testApp, cleanupUsers } from './helpers.js';
-import { lastMagicLinks } from '../src/auth.js';
+import { lastMagicLinks, lastOtps } from '../src/auth.js';
 import type { App } from '../src/app.js';
 import type { DbHandle } from '@minnegela/db';
 
@@ -34,6 +34,26 @@ describe.skipIf(!HAS_DB)('auth', () => {
     expect(viaBearer.statusCode).toBe(200);
     const [row] = (await admin.db.execute(sql`select display_name from users where email = ${email}`)) as unknown as [{ display_name: string }];
     expect(row.display_name).toBe('Auth Tester');
+  });
+
+  it('email code (mobile): send → sign-in with otp → bearer token → PATCH /v1/me sets the name', async () => {
+    const otpEmail = `otp-${Date.now()}@apitest.local`;
+    const send = await app.inject({ method: 'POST', url: '/v1/auth/email-otp/send-verification-otp', payload: { email: otpEmail, type: 'sign-in' } });
+    expect(send.statusCode).toBe(200);
+    const code = lastOtps.get(otpEmail)?.otp;
+    expect(code).toMatch(/^\d{6}$/);
+    const wrong = await app.inject({ method: 'POST', url: '/v1/auth/sign-in/email-otp', payload: { email: otpEmail, otp: '000000' } });
+    expect(wrong.statusCode).toBeGreaterThanOrEqual(400);
+    const signIn = await app.inject({ method: 'POST', url: '/v1/auth/sign-in/email-otp', payload: { email: otpEmail, otp: code } });
+    expect(signIn.statusCode).toBe(200);
+    const token = (signIn.headers['set-auth-token'] as string) || signIn.json().token;
+    expect(token).toBeTruthy();
+    const me = await app.inject({ method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${token}` } });
+    expect(me.statusCode).toBe(200);
+    expect(me.json().user.email).toBe(otpEmail);
+    const patched = await app.inject({ method: 'PATCH', url: '/v1/me', headers: { authorization: `Bearer ${token}` }, payload: { displayName: 'Phone User' } });
+    expect(patched.statusCode).toBe(200);
+    expect((await app.inject({ method: 'GET', url: '/v1/me', headers: { authorization: `Bearer ${token}` } })).json().user.displayName).toBe('Phone User');
   });
 
   it('no session → 401 problem+json; unknown route → 404', async () => {

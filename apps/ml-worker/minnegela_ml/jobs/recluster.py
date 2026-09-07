@@ -8,6 +8,8 @@ import zoneinfo
 
 import numpy as np
 
+from minnegela_ml.db import vec
+
 from .. import db, queue
 from ..constants import WBS
 from ..wbs import Constraints, ExistingEvent, Item, segment
@@ -87,7 +89,7 @@ def _load_items(conn, group_id: str, lo, hi) -> tuple[list[Item], dict[str, list
         assets_of_blob.setdefault(bid, []).append(str(r["asset_id"]))
         if len(assets_of_blob[bid]) > 1:
             continue
-        emb = None if r["clip_emb"] is None else np.asarray(r["clip_emb"], dtype=np.float32)
+        emb = None if r["clip_emb"] is None else vec(r["clip_emb"])
         tags = {t["tag"]: float(t["score"]) for t in (r["tags"] or []) if isinstance(t, dict)}
         items.append(Item(
             id=str(r["asset_id"]), blob_id=bid, t=float(r["t"]), contrib=str(r["owner_user_id"]),
