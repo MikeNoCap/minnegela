@@ -1,5 +1,5 @@
 import * as chrono from 'chrono-node';
-import type { SearchQuery, SearchChip } from '@minnegela/shared';
+import { tagKeyFor, tagLabel, type Locale, type SearchQuery, type SearchChip } from '@minnegela/shared';
 
 export type ParserPerson = { id: number; name: string; aliases?: string[] };
 export type ParseInput = {
@@ -7,6 +7,8 @@ export type ParseInput = {
   /** The caller's linked person, for "me" / "meg". */
   mePersonId: number | null;
   now?: Date;
+  /** Language for chip labels; tags are recognised in both languages regardless. */
+  locale?: Locale;
   /** Trigram match of leftover text against visible event titles; null when nothing scores ≥ 0.35. */
   matchEventTitle?: (text: string) => Promise<{ id: string; title: string; score: number } | null>;
   mode?: 'events' | 'media';
@@ -138,21 +140,41 @@ export async function parseQuery(raw: string, input: ParseInput): Promise<ParseR
   }
 
   // 4. leftover words, minus glue
-  const leftover = text.split(/\s+/).map((w) => w.replace(/^[,.!?]+|[,.!?]+$/g, '')).filter((w) => w && !GLUE.has(w.toLowerCase()));
-  const remainder = leftover.join(' ');
+  const leftoverText = () => text.split(/\s+/).map((w) => w.replace(/^[,.!?]+|[,.!?]+$/g, '')).filter((w) => w && !GLUE.has(w.toLowerCase())).join(' ');
+  const titleText = leftoverText();
 
-  // 5. event title
-  if (remainder.length >= 3 && input.matchEventTitle) {
-    const hit = await input.matchEventTitle(remainder);
+  // 5. event title — before tags, since titles are made of tag words ("Emma's birthday")
+  if (titleText.length >= 3 && input.matchEventTitle) {
+    const hit = await input.matchEventTitle(titleText);
     if (hit) {
       query.eventId = hit.id;
-      chips.push({ kind: 'event', label: hit.title, value: hit.id, text: remainder });
+      chips.push({ kind: 'event', label: hit.title, value: hit.id, text: titleText });
       query.mode = input.mode ?? 'media';
       return { query, chips };
     }
   }
 
-  // 6. remaining text → semantic (media mode)
+  // 6. tags from the ML vocabulary, typed in either language; longest phrase first ("frisbee golf", "tur i naturen")
+  const words = [...text.matchAll(/\S+/g)].map((m) => ({ start: m.index, len: m[0].length, w: m[0].replace(/^[,.!?]+|[,.!?]+$/g, '') }));
+  const tags: string[] = [];
+  for (let i = 0; i < words.length; ) {
+    let hit: { key: string; n: number } | null = null;
+    for (let n = Math.min(3, words.length - i); n >= 1 && !hit; n--) {
+      const key = tagKeyFor(words.slice(i, i + n).map((x) => x.w).join(' '));
+      if (key) hit = { key, n };
+    }
+    if (!hit) { i++; continue; }
+    const span = words.slice(i, i + hit.n);
+    const last = span[span.length - 1]!;
+    const consumed = text.slice(span[0]!.start, last.start + last.len);
+    if (!tags.includes(hit.key)) { tags.push(hit.key); chips.push({ kind: 'tag', label: tagLabel(hit.key, input.locale ?? 'en'), value: hit.key, text: consumed }); }
+    for (const x of span) consume(x.start, x.len);
+    i += hit.n;
+  }
+  if (tags.length) query.tags = tags;
+
+  // 7. remaining text → semantic (media mode; the text embedding is English-only)
+  const remainder = leftoverText();
   if (remainder) {
     query.semantic = remainder;
     chips.push({ kind: 'semantic', label: remainder, value: remainder, text: remainder });

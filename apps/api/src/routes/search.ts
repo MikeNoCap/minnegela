@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { AppContext } from '../app.js';
+import { TAGS } from '@minnegela/shared';
 import { withViewer, sql, visibleEventsWhere, visibleAssetsWhere, events, assets, type SearchChip } from '../deps.js';
 import { rows, EVENT_COLUMNS, MEDIA_COLUMNS, toEventCard, toMediaItem, titleSql, visibleEventsFrom, type EventRow, type MediaRow, E, A, eventRows, mediaRows, intArr, ts } from '../dto.js';
 import { parseQuery } from '../search/parser.js';
@@ -20,6 +21,7 @@ export async function searchRoutes(app: FastifyInstance, ctx: AppContext) {
         people: people.map((p) => ({ id: p.id, name: p.name!, aliases: p.name!.includes(' ') ? [p.name!.split(' ')[0]!] : [] })),
         mePersonId: v.personId,
         mode: req.query.mode,
+        locale: req.locale,
         matchEventTitle: async (t) => {
           const title = titleSql(req.locale);
           const [hit] = await rows<{ id: string; title: string; score: number }>(tx, sql`select e.id, ${title} as title, similarity(${title}, ${t}) as score
@@ -29,13 +31,19 @@ export async function searchRoutes(app: FastifyInstance, ctx: AppContext) {
       });
       const all = query.people?.all ?? [];
       const timeEvents = query.time ? sql`and e.end_at >= ${ts(query.time.from ?? new Date(0))} and e.start_at <= ${ts(query.time.to ?? new Date(4102444800000))}` : sql``;
+      // a tag is "in the picture" on blobs b when it is stored at/above TAGS.present
+      const tagOn = (tag: string) => sql`exists (select 1 from jsonb_array_elements(b.tags) tg where tg->>'tag' = ${tag} and (tg->>'score')::float >= ${TAGS.present})`;
+      const tags = query.tags ?? [];
 
       if (query.mode === 'events') {
+        // every tag must appear on at least one of the event's photos; the events with the most matching photos come first
+        const tagTerms = sql.join(tags.map((tg) => sql`and exists (select 1 from event_assets ea4 join blobs b on b.id = ea4.blob_id where ea4.event_id = e.id and ${tagOn(tg)})`), sql` `);
+        const tagRank = tags.length ? sql`(select count(*) from event_assets ea5 join blobs b on b.id = ea5.blob_id where ea5.event_id = e.id and (${sql.join(tags.map(tagOn), sql` or `)})) desc,` : sql``;
         const list = await eventRows(tx, sql`select ${EVENT_COLUMNS} ${visibleEventsFrom(v)} and e.kind <> 'loose'
-          ${all.length ? sql`and e.person_ids @> ${intArr(all)}` : sql``} ${timeEvents}
+          ${all.length ? sql`and e.person_ids @> ${intArr(all)}` : sql``} ${timeEvents} ${tagTerms}
           ${query.eventId ? sql`and e.id = ${query.eventId}::uuid` : sql``}
           ${query.mediaType === 'video' ? sql`and e.n_videos > 0` : sql``}
-          order by e.start_at desc limit ${req.query.limit}`);
+          order by ${tagRank} e.start_at desc limit ${req.query.limit}`);
         return { parsed: chips, query, mode: 'events' as const, events: list.map((e) => toEventCard(e, req.locale)) };
       }
 
@@ -46,6 +54,7 @@ export async function searchRoutes(app: FastifyInstance, ctx: AppContext) {
       const timeMedia = query.time ? sql`and b.captured_at >= ${ts(query.time.from ?? new Date(0))} and b.captured_at < ${ts(query.time.to ?? new Date(4102444800000))}` : sql``;
       const eventTerm = query.eventId ? sql`and exists (select 1 from event_assets ea3 where ea3.asset_id = a.id and ea3.event_id = ${query.eventId}::uuid)` : sql``;
       const typeTerm = query.mediaType === 'video' ? sql`and b.duration_ms is not null` : query.mediaType === 'photo' ? sql`and b.duration_ms is null` : sql``;
+      const tagTerm = sql.join(tags.map((tg) => sql`and ${tagOn(tg)}`), sql` `);
       let vec: number[] | null = null;
       if (query.semantic) {
         vec = await textEmbedding(tx, ctx.cfg.ML_TEXT_EMBED_URL, query.semantic, req.log);
@@ -56,7 +65,7 @@ export async function searchRoutes(app: FastifyInstance, ctx: AppContext) {
           (select ea.event_id from event_assets ea join events e on e.id = ea.event_id where ea.asset_id = a.id and e.deleted_at is null order by ea.confidence desc limit 1) as event_id,
           null::real as ea_confidence, null::text as ea_tier, null::text as ea_source
         from assets a join blobs b on b.id = a.blob_id
-        where ${visibleAssetsWhere(v, A)} and not b.is_utility ${peopleTerm} ${timeMedia} ${eventTerm} ${typeTerm}
+        where ${visibleAssetsWhere(v, A)} and not b.is_utility ${peopleTerm} ${timeMedia} ${eventTerm} ${typeTerm} ${tagTerm}
         ${vec ? sql`and b.clip_emb is not null` : sql``}
         ${order} limit ${req.query.limit}`);
       const items = list.map((m) => ({ ...toMediaItem({ ...m, event_id: null }), eventId: m.event_id, viaEvent: all.length > 0 && !all.every((p) => (m.person_ids ?? []).includes(p)) }));

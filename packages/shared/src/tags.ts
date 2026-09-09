@@ -62,3 +62,11 @@ export function tagLabel(tag: string, locale: Locale): string {
   const key = cleanTag(tag);
   return (locale === 'nb' ? NB[key] : undefined) ?? key;
 }
+
+const KEY_BY_LABEL = new Map<string, string>();
+for (const [key, nb] of Object.entries(NB)) { KEY_BY_LABEL.set(key, key); KEY_BY_LABEL.set(nb.toLowerCase(), key); }
+
+/** The tag key a person may have typed in either language ("røyking" → "smoking"); null when the phrase is not a tag. */
+export function tagKeyFor(phrase: string): string | null {
+  return KEY_BY_LABEL.get(phrase.trim().toLowerCase()) ?? null;
+}

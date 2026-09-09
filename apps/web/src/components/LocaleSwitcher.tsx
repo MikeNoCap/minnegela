@@ -14,7 +14,7 @@ export function LocaleSwitcher({ className = '' }: { className?: string }) {
   const [pending, start] = useTransition();
   return (
     <select
-      className={`input w-auto py-1 ${className}`}
+      className={`input w-auto! py-1 ${className}`}
       value={locale}
       aria-label={t('label')}
       disabled={pending}

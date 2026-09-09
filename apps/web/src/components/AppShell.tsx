@@ -46,7 +46,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             <input className="input py-1" placeholder={t('searchPlaceholder')} value={q} onChange={(e) => setQ(e.target.value)} aria-label={t('search')} />
           </form>
           {me.groups.length > 1 && (
-            <select className="input w-auto py-1" value={groupId} onChange={(e) => setGroupId(e.target.value)} aria-label={t('group')}>
+            <select className="input w-auto! py-1" value={groupId} onChange={(e) => setGroupId(e.target.value)} aria-label={t('group')}>
               {me.groups.map((g) => <option key={g.id} value={g.id}>{g.name}</option>)}
             </select>
           )}

@@ -145,9 +145,10 @@ export async function groupRoutes(app: FastifyInstance, ctx: AppContext) {
     const v = await req.ctxFor(req.params.g);
     return withViewer(ctx.db, v, async (tx) => {
       const queues = await queueDepths(tx);
-      const [c] = await rows<{ assets: number; previews: number; originals: number; blobs: number; analyzed: number; events: number; bytes: string }>(tx, sql`select
+      const [c] = await rows<{ assets: number; previews: number; analyzing: number; originals: number; blobs: number; analyzed: number; events: number; bytes: string }>(tx, sql`select
           (select count(*)::int from assets where group_id = ${v.groupId}::uuid and deleted_at is null) as assets,
           (select count(*)::int from assets where group_id = ${v.groupId}::uuid and deleted_at is null and preview_uploaded_at is not null) as previews,
+          (select count(distinct a.blob_id)::int from assets a join blobs b on b.id = a.blob_id where a.group_id = ${v.groupId}::uuid and a.deleted_at is null and a.preview_uploaded_at is not null and b.analyzed_at is null) as analyzing,
           (select count(*)::int from blobs where group_id = ${v.groupId}::uuid and storage_key is not null) as originals,
           (select count(*)::int from blobs where group_id = ${v.groupId}::uuid) as blobs,
           (select count(*)::int from blobs where group_id = ${v.groupId}::uuid and analyzed_at is not null) as analyzed,
@@ -159,7 +160,7 @@ export async function groupRoutes(app: FastifyInstance, ctx: AppContext) {
         queues,
         devices: devs.map((d) => ({ ...d, lastSyncAt: iso(d.lastSyncAt) })),
         storage: { blobs: c!.blobs, bytes: Number(c!.bytes), originals: c!.originals, endpoint: ctx.cfg.S3_ENDPOINT, bucket: ctx.cfg.S3_BUCKET },
-        analyzing: Math.max(0, c!.previews - c!.analyzed),
+        analyzing: c!.analyzing,
         counts: { assets: c!.assets, previews: c!.previews, analyzed: c!.analyzed, events: c!.events },
       };
     });
