@@ -24,6 +24,9 @@ export class Storage {
       region: cfg.region,
       forcePathStyle: cfg.forcePathStyle,
       credentials: { accessKeyId: cfg.accessKeyId, secretAccessKey: cfg.secretAccessKey },
+      // requestTimeout is a socket idle timeout: a stalled response is aborted (and retried by the
+      // SDK) instead of hanging the job until the OS gives up on the TCP connection ~16 min later.
+      requestHandler: { connectionTimeout: cfg.connectTimeoutMs, requestTimeout: cfg.requestTimeoutMs },
     });
     this.bucket = cfg.bucket;
     this.dir = path.resolve(cacheDir);

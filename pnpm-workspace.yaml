@@ -1,3 +1,10 @@
 packages:
   - apps/*
   - packages/*
+
+# pnpm 10 requires injected workspace packages for `pnpm deploy` (used by the
+# api and media-worker Dockerfiles). Injected = hard-linked copies instead of
+# symlinks; the sync setting keeps them fresh after package builds.
+injectWorkspacePackages: true
+syncInjectedDepsAfterScripts:
+  - build

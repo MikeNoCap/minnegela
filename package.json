@@ -1,7 +1,7 @@
 {
   "name": "minnegela",
   "private": true,
-  "packageManager": "pnpm@10.0.0",
+  "packageManager": "pnpm@10.18.3",
   "engines": {
     "node": ">=22"
   },

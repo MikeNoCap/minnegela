@@ -9,6 +9,8 @@ const Env = z.object({
   DATABASE_URL_ADMIN: z.string().optional(),
   BETTER_AUTH_SECRET: z.string().min(16),
   MAIL_TRANSPORT: z.enum(['console', 'smtp']).default('console'),
+  SMTP_URL: z.string().url().optional(),
+  MAIL_FROM: z.string().default('Minnegela <no-reply@localhost>'),
   S3_ENDPOINT: z.string().url(),
   S3_BUCKET: z.string().min(1),
   S3_REGION: z.string().default('auto'),
@@ -23,5 +25,6 @@ export type Config = z.infer<typeof Env>;
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const r = Env.safeParse(env);
   if (!r.success) throw new Error(`Invalid environment: ${r.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ')}`);
+  if (r.data.MAIL_TRANSPORT === 'smtp' && !r.data.SMTP_URL) throw new Error('Invalid environment: SMTP_URL is required when MAIL_TRANSPORT=smtp');
   return r.data;
 }

@@ -75,7 +75,7 @@ export default fp(async function viewerPlugin(app: FastifyInstance, opts: { auth
     req.ctxFor = async (groupId: string) => {
       const user = req.requireUser();
       const m = (await req.memberships()).find((x) => x.groupId === groupId);
-      if (!m) throw notFound('Group not found');
+      if (!m) throw notFound('group_not_found', 'Group not found');
       return { groupId, userId: user.id, personId: m.personId, role: m.role };
     };
     req.ctxWhere = async (probe) => {

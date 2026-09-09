@@ -1,10 +1,10 @@
 import type { z } from 'zod';
-import type { EventCard, EventDetail, MediaItem, PersonSummary, SearchChip, Moment as MomentSchema, MemberSummary as MemberSummarySchema, Visibility } from '@minnegela/shared';
-export type { EventCard, EventDetail, MediaItem, PersonSummary, SearchChip };
+import type { EventCard, EventDetail, MediaItem, PersonSummary, SearchChip, Moment as MomentSchema, MemberSummary as MemberSummarySchema, Visibility, ConfidenceKey } from '@minnegela/shared';
+export type { EventCard, EventDetail, MediaItem, PersonSummary, SearchChip, ConfidenceKey };
 export type Moment = z.infer<typeof MomentSchema>;
 export type MemberSummary = z.infer<typeof MemberSummarySchema>;
 export type VisibilityInfo = z.infer<typeof Visibility>;
-export type Page<T> = { items: T[]; nextCursor: string | null };
+export type Page<T> = { items: T[]; nextCursor: string | null; quietCount?: number | null };
 
 /** GET /v1/me */
 export type Me = {

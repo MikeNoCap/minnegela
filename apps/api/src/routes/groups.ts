@@ -33,7 +33,7 @@ export async function groupRoutes(app: FastifyInstance, ctx: AppContext) {
     const v = await req.ctxFor(req.params.g);
     return withViewer(ctx.db, v, async (tx) => {
       const [g] = await tx.select().from(groups).where(sql`${groups.id} = ${v.groupId}::uuid`);
-      if (!g) throw notFound('Group not found');
+      if (!g) throw notFound('group_not_found', 'Group not found');
       const [{ n }] = (await tx.execute(sql`select count(*)::int as n from group_members where group_id = ${v.groupId}::uuid`)) as unknown as [{ n: number }];
       return { id: g.id, name: g.name, settings: g.settings, createdAt: g.createdAt.toISOString(), role: v.role, personId: v.personId, nMembers: n };
     });
@@ -41,7 +41,7 @@ export async function groupRoutes(app: FastifyInstance, ctx: AppContext) {
 
   r.patch('/v1/groups/:g', { schema: { params: G, body: z.object({ name: z.string().min(1).max(100).optional(), settings: z.object({ cluster_unknown_faces: z.boolean().optional() }).optional() }) } }, async (req) => {
     const v = await req.ctxFor(req.params.g);
-    if (v.role !== 'owner') throw forbidden('Owner only');
+    if (v.role !== 'owner') throw forbidden('owner_only', 'Owner only');
     return withViewer(ctx.db, v, async (tx) => {
       const [g] = await tx.update(groups).set({ ...(req.body.name ? { name: req.body.name } : {}), ...(req.body.settings ? { settings: sql`settings || ${JSON.stringify(req.body.settings)}::jsonb` } : {}) }).where(sql`${groups.id} = ${v.groupId}::uuid`).returning();
       await audit(tx, v, 'group.update', { type: 'group', id: v.groupId }, req.body, req);
@@ -51,7 +51,7 @@ export async function groupRoutes(app: FastifyInstance, ctx: AppContext) {
 
   r.post('/v1/groups/:g/invites', { schema: { params: G } }, async (req, reply) => {
     const v = await req.ctxFor(req.params.g);
-    if (v.role !== 'owner') throw forbidden('Owner only');
+    if (v.role !== 'owner') throw forbidden('owner_only', 'Owner only');
     const code = randomBytes(8).toString('base64url').replace(/[-_]/g, 'x').slice(0, 10);
     const expiresAt = new Date(Date.now() + 7 * 24 * 3600_000);
     await withViewer(ctx.db, v, async (tx) => {
@@ -63,7 +63,7 @@ export async function groupRoutes(app: FastifyInstance, ctx: AppContext) {
 
   r.delete('/v1/groups/:g/invites/:code', { schema: { params: G.extend({ code: z.string() }) } }, async (req, reply) => {
     const v = await req.ctxFor(req.params.g);
-    if (v.role !== 'owner') throw forbidden('Owner only');
+    if (v.role !== 'owner') throw forbidden('owner_only', 'Owner only');
     await withViewer(ctx.db, v, (tx) => tx.update(groupInvites).set({ revokedAt: new Date() }).where(sql`${groupInvites.code} = ${req.params.code} and ${groupInvites.groupId} = ${v.groupId}::uuid`));
     return reply.status(204).send();
   });
@@ -76,7 +76,7 @@ export async function groupRoutes(app: FastifyInstance, ctx: AppContext) {
         const [row] = (await tx.execute(sql`select app_accept_invite(${req.params.code}) as gid`)) as unknown as [{ gid: string }];
         groupId = row.gid;
       } catch (e) {
-        if (String((e as Error).message).includes('invalid_invite') || String((e as { cause?: { message?: string } }).cause?.message).includes('invalid_invite')) throw badRequest('Invite is invalid, used or expired');
+        if (String((e as Error).message).includes('invalid_invite') || String((e as { cause?: { message?: string } }).cause?.message).includes('invalid_invite')) throw badRequest('invite_invalid', 'Invite is invalid, used or expired');
         throw e;
       }
       await setViewer(tx, { groupId, userId: user.id, personId: null });

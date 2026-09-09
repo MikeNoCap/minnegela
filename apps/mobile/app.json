@@ -11,14 +11,17 @@
       "bundleIdentifier": "no.minnegela.app",
       "supportsTablet": false,
       "infoPlist": {
-        "NSPhotoLibraryUsageDescription": "Minnegela indexes your photo library so your friend group can find shared memories. Friends only ever see events you were at together; everything else stays private to you.",
+        "NSPhotoLibraryUsageDescription": "Minnegela indekserer bildebiblioteket ditt slik at vennegjengen kan finne felles minner. Venner ser bare hendelser dere var på sammen; alt annet forblir privat for deg.",
         "UIBackgroundModes": [
           "fetch",
           "processing"
         ],
         "BGTaskSchedulerPermittedIdentifiers": [
           "com.expo.modules.backgroundtask.processing"
-        ]
+        ],
+        "ITSAppUsesNonExemptEncryption": false,
+        "CFBundleAllowMixedLocalizations": true,
+        "CFBundleDevelopmentRegion": "nb"
       }
     },
     "android": {
@@ -27,7 +30,11 @@
         "android.permission.READ_MEDIA_IMAGES",
         "android.permission.READ_MEDIA_VIDEO",
         "android.permission.READ_MEDIA_VISUAL_USER_SELECTED",
-        "android.permission.ACCESS_MEDIA_LOCATION"
+        "android.permission.ACCESS_MEDIA_LOCATION",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_AUDIO",
+        "android.permission.RECORD_AUDIO"
       ]
     },
     "plugins": [
@@ -39,20 +46,40 @@
       [
         "expo-media-library",
         {
-          "photosPermission": "Minnegela indexes your photos so your friend group can find shared memories. Friends only see events you were at together.",
-          "savePhotosPermission": "Minnegela does not save photos to your library.",
+          "photosPermission": "Minnegela indekserer bildebiblioteket ditt slik at vennegjengen kan finne felles minner. Venner ser bare hendelser dere var på sammen; alt annet forblir privat for deg.",
+          "savePhotosPermission": "Minnegela lagrer ikke bilder i biblioteket ditt.",
           "isAccessMediaLocationEnabled": true
         }
       ],
       [
         "expo-image-picker",
         {
-          "photosPermission": "Pick 3\u20135 photos of yourself so Minnegela can recognise you in your friends' photos."
+          "photosPermission": "Minnegela indekserer bildebiblioteket ditt slik at vennegjengen kan finne felles minner. Venner ser bare hendelser dere var på sammen; alt annet forblir privat for deg.",
+          "cameraPermission": "Minnegela bruker ikke kameraet."
+        }
+      ],
+      [
+        "expo-localization",
+        {
+          "supportedLocales": [
+            "nb",
+            "en"
+          ]
         }
       ]
     ],
     "experiments": {
       "typedRoutes": false
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "7e358203-0c69-47c9-99d6-f5db0641e1b3"
+      }
+    },
+    "locales": {
+      "nb": "./locales/nb.json",
+      "en": "./locales/en.json"
     }
   }
 }

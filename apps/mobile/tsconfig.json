@@ -17,9 +17,7 @@
   "include": [
     "app",
     "src",
-    "test",
-    "expo-env.d.ts",
-    ".expo/types/**/*.ts"
+    "test"
   ],
   "exclude": [
     "node_modules"

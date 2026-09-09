@@ -1,6 +1,7 @@
 'use client';
 import Link from 'next/link';
 import { use, useState } from 'react';
+import { useTranslations } from 'next-intl';
 import { usePerson, useEvents, useSearch, peopleActions, useAction } from '@/lib/hooks';
 import { useGroup } from '@/lib/group';
 import { EventCard } from '@/components/EventCard';
@@ -10,6 +11,8 @@ import { Avatar } from '@/components/Avatar';
 import { FaceCrop } from '@/components/FaceCrop';
 
 export default function PersonPage({ params }: { params: Promise<{ id: string }> }) {
+  const t = useTranslations('person');
+  const tc = useTranslations('common');
   const { id } = use(params);
   const p = usePerson(id);
   const events = useEvents({ people: [Number(id)] });
@@ -20,7 +23,7 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
   const [name, setName] = useState('');
   const rename = useAction((n: string) => peopleActions.patch(Number(id), { name: n }), () => [['person', id], ['people']]);
   const hide = useAction(() => peopleActions.patch(Number(id), { hidden: true }), () => [['people']]);
-  if (p.isError) return <p className="text-ink-3">This person is not in your view.</p>;
+  if (p.isError) return <p className="text-ink-3">{t('notInView')}</p>;
   const d = p.data;
   if (!d) return null;
   const evs = d.events ?? events.data?.pages.flatMap((x) => x.items) ?? [];
@@ -33,28 +36,28 @@ export default function PersonPage({ params }: { params: Promise<{ id: string }>
         <div className="flex-1">
           {editing ? (
             <form onSubmit={(e) => { e.preventDefault(); rename.mutate(name.trim()); setEditing(false); }} className="flex gap-2">
-              <input className="input max-w-xs" autoFocus value={name} onChange={(e) => setName(e.target.value)} />
-              <button className="btn btn-primary">Save</button><button type="button" className="btn" onClick={() => setEditing(false)}>Cancel</button>
+              <input className="input max-w-xs" autoFocus value={name} onChange={(e) => setName(e.target.value)} aria-label={t('nameLabel')} />
+              <button className="btn btn-primary">{tc('save')}</button><button type="button" className="btn" onClick={() => setEditing(false)}>{tc('cancel')}</button>
             </form>
           ) : (
-            <h1 className="text-xl font-semibold">{d.name ?? 'Unnamed'}{isMe && <span className="ml-2 chip">you</span>}</h1>
+            <h1 className="text-xl font-semibold">{d.name ?? tc('unnamed')}{isMe && <span className="ml-2 chip">{t('you')}</span>}</h1>
           )}
-          <div className="text-ink-2 text-[13px]">{evs.length} event{evs.length === 1 ? '' : 's'}{d.nAssets != null ? ` · ${d.nAssets} photos in your view` : ''}</div>
+          <div className="text-ink-2 text-[13px]">{t('events', { count: evs.length })}{d.nAssets != null ? ` · ${t('photosInView', { count: d.nAssets })}` : ''}</div>
           {d.coAppearances && d.coAppearances.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1">{d.coAppearances.slice(0, 8).map((c) => <Link key={c.personId} href={`/people/${c.personId}`} className="chip hover:border-ink-3">with {c.name ?? 'Unnamed'} {c.count}×</Link>)}</div>
+            <div className="mt-2 flex flex-wrap gap-1">{d.coAppearances.slice(0, 8).map((c) => <Link key={c.personId} href={`/people/${c.personId}`} className="chip hover:border-ink-3">{t('with', { name: c.name ?? tc('unnamed'), count: c.count })}</Link>)}</div>
           )}
         </div>
-        {!d.userId && <div className="flex gap-2"><button className="btn" onClick={() => { setName(d.name ?? ''); setEditing(true); }}>Rename</button><button className="btn btn-danger" onClick={() => hide.mutate()}>Hide</button></div>}
+        {!d.userId && <div className="flex gap-2"><button className="btn" onClick={() => { setName(d.name ?? ''); setEditing(true); }}>{t('rename')}</button><button className="btn btn-danger" onClick={() => hide.mutate()}>{t('hide')}</button></div>}
       </header>
       {evs.length > 0 && (
         <section>
-          <h2 className="text-ink-3 text-xs uppercase tracking-wide mb-2">Events</h2>
+          <h2 className="text-ink-3 text-xs uppercase tracking-wide mb-2">{t('eventsHeading')}</h2>
           <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{evs.map((e) => <EventCard key={e.id} ev={e} />)}</div>
         </section>
       )}
       {items.length > 0 && (
         <section>
-          <h2 className="text-ink-3 text-xs uppercase tracking-wide mb-2">Photos</h2>
+          <h2 className="text-ink-3 text-xs uppercase tracking-wide mb-2">{t('photosHeading')}</h2>
           <MediaGrid items={items} onOpen={(m) => setViewer(items.indexOf(m))} />
         </section>
       )}

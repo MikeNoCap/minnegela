@@ -6,6 +6,7 @@ import * as MediaLibrary from 'expo-media-library/legacy';
 import { AppProvider, useApp } from '@/store/context';
 import { nextStep, type Step } from '@/onboarding';
 import { useTheme } from '@/ui/theme';
+import '@/i18n';
 import '@/sync/background';
 
 const qc = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 30_000 } } });
@@ -17,7 +18,9 @@ function Gate({ children }: { children: React.ReactNode }) {
   const [perm, setPerm] = useState<'granted' | 'limited' | 'denied' | 'unknown'>('unknown');
 
   useEffect(() => {
-    MediaLibrary.getPermissionsAsync().then((p) => setPerm(p.granted ? (p.accessPrivileges === 'limited' ? 'limited' : 'granted') : p.canAskAgain ? 'unknown' : 'denied')).catch(() => setPerm('unknown'));
+    // Same granular set as the permissions screen requests: the no-arg check also
+    // demands audio on Android 13+, which we never ask for, and reports granted:false.
+    MediaLibrary.getPermissionsAsync(false, ['photo', 'video']).then((p) => setPerm(p.granted ? (p.accessPrivileges === 'limited' ? 'limited' : 'granted') : p.canAskAgain ? 'unknown' : 'denied')).catch(() => setPerm('unknown'));
   }, [app.settings.onboardingDone, segments]);
 
   useEffect(() => {
@@ -25,7 +28,8 @@ function Gate({ children }: { children: React.ReactNode }) {
     const step: Step = nextStep({ token: app.token, me: app.me, settings: app.settings, photoPermission: perm });
     const inOnboarding = segments[0] === '(onboarding)';
     const current = (segments as readonly string[])[1];
-    if (step === 'done') { if (inOnboarding) router.replace('/(tabs)'); return; }
+    // 'enroll' stays reachable after onboarding (privacy tab -> re-enroll).
+    if (step === 'done') { if (inOnboarding && current !== 'enroll') router.replace('/(tabs)'); return; }
     if (!inOnboarding || current !== step) router.replace(`/(onboarding)/${step}` as never);
   }, [app.ready, app.token, app.me, app.settings, perm, segments, router]);
 

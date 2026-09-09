@@ -5,6 +5,8 @@ import type { LocalDb } from '@/db/types';
 import { createClient } from '@/api/client';
 import { makeApi, type Api, type Me } from '@/api';
 import { loadToken, saveToken, loadApiUrl, saveApiUrl } from '@/auth/session';
+import { DEFAULT_LOCALE } from '@minnegela/shared';
+import { currentLocale, setLocale } from '@/i18n';
 import { parseSettings, type Settings } from './settings';
 
 type AppState = {
@@ -41,6 +43,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const api = useMemo(() => makeApi(createClient({
     baseUrl: () => urlRef.current,
     token: () => tokenRef.current,
+    locale: currentLocale,
     onUnauthorized: () => { tokenRef.current = null; setTokenState(null); setMe(null); void saveToken(null); },
   })), []);
 
@@ -48,9 +51,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       const d = await openLocalDb();
       const s = parseSettings(await d.getSyncState('settings'));
+      // The build-time server URL is authoritative; a stored override only fills in when the build has none.
       const storedUrl = await loadApiUrl();
-      if (storedUrl) s.apiUrl = storedUrl;
+      if (storedUrl && !s.apiUrl) s.apiUrl = storedUrl;
       urlRef.current = s.apiUrl;
+      await setLocale(s.locale ?? DEFAULT_LOCALE);
       const t = await loadToken();
       tokenRef.current = t;
       setDb(d); setSettings(s); setTokenState(t);
@@ -63,6 +68,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSettings((prev) => {
       const next = patch(prev);
       urlRef.current = next.apiUrl;
+      if ((next.locale ?? DEFAULT_LOCALE) !== currentLocale()) void setLocale(next.locale ?? DEFAULT_LOCALE);
       void db?.setSyncState('settings', JSON.stringify(next));
       return next;
     });

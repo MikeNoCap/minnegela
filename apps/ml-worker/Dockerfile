@@ -9,7 +9,10 @@
 ARG ML_EXTRA=ml
 FROM docker.io/nvidia/cuda:12.6.3-cudnn-runtime-ubuntu24.04 AS base
 ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 UV_LINK_MODE=copy
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates libgl1 libglib2.0-0 && rm -rf /var/lib/apt/lists/*
+# libcusparselt0 + cuda-cupti-12-6: torch's cu126 wheel links both, but the
+# cudnn-runtime base image ships neither (cuSPARSELt is a separate product,
+# CUPTI lives in the devel image).
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates libgl1 libglib2.0-0 libcusparselt0 cuda-cupti-12-6 tzdata && rm -rf /var/lib/apt/lists/*
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /app
 ARG ML_EXTRA

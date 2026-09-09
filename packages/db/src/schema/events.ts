@@ -1,4 +1,5 @@
-import { pgTable, uuid, text, timestamp, integer, real, doublePrecision, boolean, primaryKey, index } from 'drizzle-orm/pg-core';
+import { pgTable, uuid, text, jsonb, timestamp, integer, smallint, real, doublePrecision, boolean, primaryKey, index } from 'drizzle-orm/pg-core';
+import type { Localized } from '@minnegela/shared';
 import { users } from './auth.js';
 import { groups } from './tenancy.js';
 import { blobs, assets } from './media.js';
@@ -13,6 +14,7 @@ export const places = pgTable('places', {
   lon: doublePrecision('lon').notNull(),
   radiusM: real('radius_m').notNull().default(300),
   nEvents: integer('n_events').notNull().default(0),
+  routine: real('routine').notNull().default(0),
   homeOfUserId: uuid('home_of_user_id').references(() => users.id, { onDelete: 'set null' }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 });
@@ -21,7 +23,8 @@ export const events = pgTable('events', {
   id: uuid('id').primaryKey().defaultRandom(),
   groupId: uuid('group_id').notNull().references(() => groups.id, { onDelete: 'cascade' }),
   kind: text('kind', { enum: ['event', 'trip', 'loose'] }).notNull().default('event'),
-  titleAuto: text('title_auto'),
+  /** Generated title per locale; the API serves the viewer's language (§9.10). */
+  titleAuto: jsonb('title_auto').$type<Localized>(),
   titleManual: text('title_manual'),
   startAt: timestamp('start_at', { withTimezone: true }).notNull(),
   endAt: timestamp('end_at', { withTimezone: true }).notNull(),
@@ -34,6 +37,8 @@ export const events = pgTable('events', {
   nAssets: integer('n_assets').notNull().default(0),
   nVideos: integer('n_videos').notNull().default(0),
   confidence: real('confidence').notNull().default(0),
+  interest: real('interest'),
+  interestManual: smallint('interest_manual'),
   coverBlobId: uuid('cover_blob_id').references(() => blobs.id, { onDelete: 'set null' }),
   isPublicToGroup: boolean('is_public_to_group').notNull().default(false),
   openedByUserId: uuid('opened_by_user_id').references(() => users.id, { onDelete: 'set null' }),

@@ -9,8 +9,13 @@ export type LibraryAsset = Omit<LocalAsset, 'serverAssetId' | 'state' | 'lastErr
 export type LibraryPage = { assets: LibraryAsset[]; endCursor: string | null; hasNextPage: boolean };
 
 export interface Library {
-  /** Assets created after `createdAfter` (ms epoch), oldest first, paged. */
-  page(opts: { createdAfter: number | null; after: string | null; first: number; includeVideos: boolean }): Promise<LibraryPage>;
+  /**
+   * The whole library, most recently modified first, paged. `after` is the platform cursor from
+   * the previous page (an asset id on iOS, a row offset on Android); the query must not change
+   * between pages of one walk. The runner stops the walk on its own once it reaches assets it
+   * has already seen.
+   */
+  page(opts: { after: string | null; first: number; includeVideos: boolean }): Promise<LibraryPage>;
   /** Every id currently in the library (for weekly reconciliation). */
   allIds(): Promise<string[]>;
   /** Cheap content identity when the platform can give it (iOS md5); null on Android (§16.4). */

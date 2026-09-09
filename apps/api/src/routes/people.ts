@@ -50,7 +50,7 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
         group by q.id, q.name order by n desc limit 20`);
       const [counts] = await rows<{ n_assets: number }>(tx, sql`select count(*)::int as n_assets from assets a where a.person_ids @> array[${p.id}]::int[] and ${visibleAssetsWhere(v, A)}`);
       const media = await mediaRows(tx, sql`select ${MEDIA_COLUMNS} from assets a join blobs b on b.id = a.blob_id where a.person_ids @> array[${p.id}]::int[] and ${visibleAssetsWhere(v, A)} order by b.captured_at desc nulls last limit 200`);
-      return { id: p.id, name: p.name, userId: p.user_id, coverFaceId: p.cover_face_id, hidden: p.hidden, nAssets: counts?.n_assets ?? 0, events: evs.map(toEventCard), coAppearances: co.map((c) => ({ personId: c.id, name: c.name, count: c.n, n: c.n })), media: media.map(toMediaItem) };
+      return { id: p.id, name: p.name, userId: p.user_id, coverFaceId: p.cover_face_id, hidden: p.hidden, nAssets: counts?.n_assets ?? 0, events: evs.map((e) => toEventCard(e, req.locale)), coAppearances: co.map((c) => ({ personId: c.id, name: c.name, count: c.n, n: c.n })), media: media.map(toMediaItem) };
     });
   });
 
@@ -61,7 +61,7 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
       let faces = { labelled: 0, applied: 0 };
       if (req.body.clusterId) {
         const [uc] = await rows<{ face_ids: string[] }>(tx, sql`select array(select f.id from faces f where f.id = any(uc.face_ids) and f.blob_id in ${visibleBlobIds(v)}) as face_ids from unknown_clusters uc where uc.id = ${req.body.clusterId}::uuid`);
-        if (!uc) throw notFound('Cluster not found');
+        if (!uc) throw notFound('cluster_not_found', 'Cluster not found');
         faces = await confirmFaces(tx, v, uc.face_ids, p!.id);
         await tx.execute(sql`update unknown_clusters set dismissed = true where id = ${req.body.clusterId}::uuid`);
       }
@@ -76,9 +76,9 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
     const { ctx: v, found: p } = await req.ctxWhere((tx, c) => findPerson(tx, c, req.params.id));
     return withViewer(ctx.db, v, async (tx) => {
       if (req.body.mergeInto !== undefined) {
-        if (p.user_id) throw badRequest('A member-linked person cannot be merged away');
+        if (p.user_id) throw badRequest('member_person_cannot_merge', 'A member-linked person cannot be merged away');
         const target = await findPerson(tx, v, req.body.mergeInto);
-        if (!target) throw badRequest('Unknown target person');
+        if (!target) throw badRequest('unknown_target_person', 'Unknown target person');
         const faceIds = (await rows<{ id: string }>(tx, sql`select id from faces where person_id = ${p.id}`)).map((f) => f.id);
         const faces = await confirmFaces(tx, v, faceIds, target.id);
         await tx.execute(sql`update event_person_tags set person_id = ${target.id} where person_id = ${p.id} and not exists (select 1 from event_person_tags t2 where t2.event_id = event_person_tags.event_id and t2.person_id = ${target.id})`);
@@ -99,7 +99,7 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
   /** §5.3 Enrollment: 3–5 reference photos (or explicit face ids) become the first confirmed faces. */
   r.post('/v1/people/:id/enroll', { schema: { params: PID, body: z.object({ assetIds: z.array(z.string().uuid()).max(20).optional(), faceIds: z.array(z.string().uuid()).max(50).optional() }) } }, async (req) => {
     const { ctx: v, found: p } = await req.ctxWhere((tx, c) => findPerson(tx, c, req.params.id));
-    if (p.user_id && p.user_id !== v.userId && v.role !== 'owner') throw forbidden('Only that member can enroll their own identity');
+    if (p.user_id && p.user_id !== v.userId && v.role !== 'owner') throw forbidden('enroll_own_identity_only', 'Only that member can enroll their own identity');
     return withViewer(ctx.db, v, async (tx) => {
       let faceIds = req.body.faceIds ?? [];
       if (req.body.assetIds?.length) {
@@ -108,7 +108,7 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
           where a.id = any(${uuidArr(req.body.assetIds)}) and ${visibleAssetsWhere(v, A)} order by f.blob_id, ((f.box->>'w')::float * (f.box->>'h')::float) desc`);
         faceIds = [...new Set([...faceIds, ...found.map((f) => f.id)])];
       }
-      if (!faceIds.length) throw badRequest('No faces found on the reference photos yet; they may still be analyzing');
+      if (!faceIds.length) throw badRequest('no_faces_on_reference_photos', 'No faces found on the reference photos yet; they may still be analyzing');
       const faces = await confirmFaces(tx, v, faceIds, p.id);
       if (p.user_id === v.userId) await tx.execute(sql`update group_members set consent_faces_at = coalesce(consent_faces_at, now()) where group_id = ${v.groupId}::uuid and user_id = ${v.userId}::uuid`);
       await enqueue(tx, 'identify', { groupId: v.groupId, personId: p.id }, { runAfterSeconds: 5 });
@@ -132,7 +132,7 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
       return {
         unnamedClusters: unnamed.filter((u) => u.visible_faces.length).map((u) => ({ id: u.id, n: u.n, coverFaceId: u.cover_face_id, faceIds: u.visible_faces })),
         lowConfidenceFaces: low.map((f) => ({ id: f.id, blobId: f.blob_id, box: f.box, personId: f.person_id, personName: f.name, matchScore: f.match_score, tier: f.tier })),
-        suggestedSplits: splits.map((e) => ({ eventId: e.id, title: toEventCard(e).title, at: (e.suggested_splits ?? []).map((d) => d.toISOString()) })),
+        suggestedSplits: splits.map((e) => ({ eventId: e.id, title: toEventCard(e, req.locale).title, at: (e.suggested_splits ?? []).map((d) => d.toISOString()) })),
       };
     });
   });
@@ -141,7 +141,7 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
     const v = await req.ctxFor(req.params.g);
     return withViewer(ctx.db, v, async (tx) => {
       const done = await rows<{ id: string }>(tx, sql`update unknown_clusters set dismissed = true where id = ${req.params.clusterId}::uuid and group_id = ${v.groupId}::uuid returning id`);
-      if (!done.length) throw notFound('Cluster not found');
+      if (!done.length) throw notFound('cluster_not_found', 'Cluster not found');
       await audit(tx, v, 'cluster.dismiss', { type: 'cluster', id: req.params.clusterId }, null, req);
       return { id: req.params.clusterId, dismissed: true };
     });
@@ -153,9 +153,9 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
       const [f] = await rows<{ id: string; crop_key: string | null }>(tx, sql`select id, crop_key from faces where id = ${req.params.id}::uuid`);
       return f;
     });
-    if (!found.crop_key) throw notFound('No crop for this face yet');
+    if (!found.crop_key) throw notFound('face_crop_not_ready', 'No crop for this face yet');
     const obj = await ctx.storage.getObject(found.crop_key);
-    if (!obj) throw notFound('Crop missing in storage');
+    if (!obj) throw notFound('face_crop_missing', 'Crop missing in storage');
     reply.header('content-type', obj.contentType).header('cache-control', 'private, max-age=3600');
     if (obj.contentLength) reply.header('content-length', String(obj.contentLength));
     return reply.send(obj.body);
@@ -168,7 +168,7 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
     });
     return withViewer(ctx.db, v, async (tx) => {
       const p = await findPerson(tx, v, req.body.personId);
-      if (!p) throw badRequest('Unknown person');
+      if (!p) throw badRequest('unknown_person', 'Unknown person');
       let applied = 0;
       if (req.body.verdict === 'confirm') {
         applied = (await confirmFaces(tx, v, [f.id], p.id)).applied;

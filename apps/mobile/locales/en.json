@@ -1,0 +1,11 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "Minnegela",
+    "NSPhotoLibraryUsageDescription": "Minnegela indexes your photo library so your friend group can find shared memories. Friends only ever see events you were at together; everything else stays private to you.",
+    "NSPhotoLibraryAddUsageDescription": "Minnegela does not save photos to your library.",
+    "NSCameraUsageDescription": "Minnegela does not use the camera."
+  },
+  "android": {
+    "app_name": "Minnegela"
+  }
+}

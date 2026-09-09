@@ -20,7 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("-v", "--verbose", action="store_true")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    sub.add_parser("worker", help="consume analyze/identify/recluster jobs from Postgres")
+    sub.add_parser("worker", help="consume analyze/identify/recluster/retag jobs from Postgres")
     s = sub.add_parser("serve", help="text-embedding HTTP endpoint (POST /embed-text)")
     s.add_argument("--port", type=int, default=settings.ml_serve_port)
     s.add_argument("--host", default="0.0.0.0")
@@ -31,6 +31,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--to", default=None, help="ISO timestamp")
     i = sub.add_parser("identify", help="run identity matching for a group now")
     i.add_argument("--group", required=True)
+    rt = sub.add_parser("retag", help="recompute tag statistics and rewrite tags for a group from stored embeddings")
+    rt.add_argument("--group", required=True)
+    rt.add_argument("--force", action="store_true", help="rewrite even when the statistics are fresh")
     a = sub.add_parser("analyze-folder", help="spike helper: run models on local files, write an HTML contact sheet (no DB)")
     a.add_argument("folder")
     a.add_argument("--out", default="analyze-folder.html")
@@ -61,6 +64,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "identify":
         from .jobs.identify import run_identify
         print(run_identify({"groupId": args.group}))
+        return 0
+    if args.cmd == "retag":
+        from .jobs.retag import run_retag
+        print(run_retag({"groupId": args.group, "force": args.force}))
         return 0
     if args.cmd == "analyze-folder":
         from .spike import analyze_folder

@@ -67,6 +67,13 @@ export async function failJob(q: Queryable, id: number, err: unknown): Promise<v
     where id = ${id}`);
 }
 
+/** Hand a claimed job back untouched (not an attempt): e.g. a worker lane is full. Retried after `delaySeconds`. */
+export async function releaseJob(q: Queryable, id: number, delaySeconds = 30): Promise<void> {
+  await q.execute(sql`update jobs set locked_by = null, locked_at = null, attempts = greatest(attempts - 1, 0),
+      run_after = now() + make_interval(secs => ${delaySeconds})
+    where id = ${id} and done_at is null`);
+}
+
 /** Jobs that were claimed but whose worker died: unlock after `staleMinutes`. */
 export async function releaseStaleJobs(q: Queryable, staleMinutes = 30): Promise<number> {
   const rows = await q.execute(sql`update jobs set locked_by = null, locked_at = null

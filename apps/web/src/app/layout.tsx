@@ -1,14 +1,22 @@
 import type { Metadata } from 'next';
+import { NextIntlClientProvider } from 'next-intl';
+import { getLocale, getTranslations } from 'next-intl/server';
 import './globals.css';
 import { Providers } from './providers';
 
-export const metadata: Metadata = { title: 'Minnegela', description: 'A search engine for your friend group’s memories.' };
+export async function generateMetadata(): Promise<Metadata> {
+  const t = await getTranslations('meta');
+  return { title: t('title'), description: t('description') };
+}
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default async function RootLayout({ children }: { children: React.ReactNode }) {
+  const locale = await getLocale();
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang={locale} suppressHydrationWarning>
       <body>
-        <Providers>{children}</Providers>
+        <NextIntlClientProvider>
+          <Providers>{children}</Providers>
+        </NextIntlClientProvider>
       </body>
     </html>
   );

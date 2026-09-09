@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { runSync, SYNC_KEYS } from '@/sync/runner';
+import { runSync, resetEnumeration, SYNC_KEYS } from '@/sync/runner';
 import { makeDeps, FakeLibrary, FakeApi, FakeUploader, asset } from './fakes';
 
 const run = (deps: ReturnType<typeof makeDeps>['deps'], o: Partial<{ budgetMs: number; maxItems: number }> = {}) => runSync(deps, { budgetMs: o.budgetMs ?? 10_000, maxItems: o.maxItems ?? 100 });
@@ -16,7 +16,65 @@ describe('sync runner (§16.3)', () => {
     expect(uploader.puts.sort()).toEqual(['original-srv-L1', 'original-srv-L2', 'prev-L1', 'prev-L2']);
     expect(api.completed.filter((c) => c.kind === 'preview')).toHaveLength(2);
     expect((await db.get('L1'))!.state).toBe('original_uploaded');
-    expect(await db.getSyncState(SYNC_KEYS.cursorCreatedAfter)).toBe(String(Date.parse(asset(3).createdAt)));
+    expect(await db.getSyncState(SYNC_KEYS.enumerateHighWater)).toBe(String(Date.parse(asset(3).createdAt)));
+    expect(await db.getSyncState(SYNC_KEYS.enumerateResume)).toBeNull();
+  });
+
+  it('walks newest-modified first and stops at the high-water mark instead of re-reading the library', async () => {
+    const lib = new FakeLibrary(Array.from({ length: 450 }, (_, i) => asset(i + 1)));
+    const { deps, db } = makeDeps({ library: lib });
+    expect((await run(deps, { maxItems: 500 })).enumerated).toBe(450);
+    expect(lib.pages).toBe(3);
+    lib.assets.push(asset(451));
+    lib.pages = 0;
+    expect((await run(deps)).enumerated).toBe(1);
+    expect(lib.pages).toBe(1);                                    // first page already reached known assets
+    expect((await db.counts()).total).toBe(451);
+  });
+
+  it('undated files (Snapchat-style, modified today) do not hide older camera photos', async () => {
+    // Bug this guards: an enumeration keyed on creation time jumped its cursor to "today" on
+    // page 1 because undated files sorted first, so no older camera photo was ever indexed.
+    const camera = Array.from({ length: 250 }, (_, i) => asset(i + 1, { modifiedAt: asset(i + 1).createdAt }));
+    const today = new Date(Date.UTC(2026, 8, 8, 12)).toISOString();
+    const undated = Array.from({ length: 10 }, (_, i) => asset(900 + i, { filename: `Snapchat-${i}.jpg`, createdAt: today, modifiedAt: today }));
+    const { deps, db } = makeDeps({ library: new FakeLibrary([...camera, ...undated]) });
+    expect((await run(deps, { maxItems: 500 })).enumerated).toBe(260);
+    expect((await db.counts()).total).toBe(260);
+    expect(await db.get('L1')).not.toBeNull();
+    expect(await db.get('L909')).not.toBeNull();
+  });
+
+  it('an enumeration that runs out of budget resumes next pass and still reaches the oldest assets', async () => {
+    let t = 0;
+    const lib = new FakeLibrary(Array.from({ length: 500 }, (_, i) => asset(i + 1)));
+    const slowPage = lib.page.bind(lib);
+    lib.page = async (o) => { t += 600; return slowPage(o); };
+    const { deps, db } = makeDeps({ library: lib, now: () => t });
+    const s1 = await run(deps, { budgetMs: 500, maxItems: 500 });
+    expect(s1.enumerated).toBe(200);
+    expect(s1.stoppedEarly).toBe(true);
+    expect(await db.getSyncState(SYNC_KEYS.enumerateHighWater)).toBeNull();     // mark only moves on a completed walk
+    expect(await db.getSyncState(SYNC_KEYS.enumerateResume)).not.toBeNull();
+    t = 0;
+    const s2 = await run(deps, { budgetMs: 100_000, maxItems: 500 });
+    expect(s2.enumerated).toBe(300);
+    expect((await db.counts()).total).toBe(500);
+    expect(await db.getSyncState(SYNC_KEYS.enumerateResume)).toBeNull();
+    expect(await db.getSyncState(SYNC_KEYS.enumerateHighWater)).toBe(String(Date.parse(asset(500).createdAt)));
+    t = 0;
+    expect((await run(deps, { budgetMs: 100_000, maxItems: 500 })).enumerated).toBe(0);
+  });
+
+  it('resetEnumeration makes the next pass re-walk everything without touching upload state', async () => {
+    const { deps, db } = makeDeps({ library: new FakeLibrary([asset(1), asset(2)]) });
+    await run(deps);
+    expect((await db.get('L1'))!.state).toBe('original_uploaded');
+    await resetEnumeration(db);
+    const s = await run(deps);
+    expect(s.enumerated).toBe(2);
+    expect(s.manifested).toBe(0);
+    expect((await db.get('L1'))!.state).toBe('original_uploaded');
   });
 
   it('is idempotent: a second pass with nothing new does nothing', async () => {
@@ -114,5 +172,64 @@ describe('sync runner (§16.3)', () => {
     const s = await run(deps);
     expect(s.lastError).toMatch(/not configured/);
     expect(api.manifests).toHaveLength(0);
+  });
+});
+
+describe('upload concurrency', () => {
+  it('runPool keeps n in flight, preserves order, and honours stop and the gate', async () => {
+    const { runPool } = await import('@/sync/runner');
+    let inFlight = 0, peak = 0; const done: number[] = [];
+    await runPool([1, 2, 3, 4, 5, 6], 3, async (x) => {
+      inFlight++; peak = Math.max(peak, inFlight);
+      await new Promise((r) => setTimeout(r, 5));
+      inFlight--; done.push(x);
+      return 'ok';
+    });
+    expect(peak).toBe(3);
+    expect(done.slice(0, 3).sort()).toEqual([1, 2, 3]);
+    const seq: number[] = [];
+    await runPool([1, 2, 3, 4, 5, 6], 1, async (x) => { seq.push(x); return x === 4 ? 'stop' : 'ok'; });
+    expect(seq).toEqual([1, 2, 3, 4]);                    // nothing launched after a stop
+    const seen: number[] = [];
+    await runPool([1, 2, 3], 2, async (x) => { seen.push(x); return 'ok'; }, () => seen.length >= 1);
+    expect(seen).toEqual([1]);
+  });
+
+  it('uploads several previews at once and the totals still add up', async () => {
+    let inFlight = 0, peak = 0;
+    const uploader = new FakeUploader();
+    uploader.put = async (t) => { inFlight++; peak = Math.max(peak, inFlight); await new Promise((r) => setTimeout(r, 5)); inFlight--; uploader.puts.push(t.key); };
+    const { deps, db } = makeDeps({ library: new FakeLibrary([asset(1), asset(2), asset(3), asset(4), asset(5), asset(6)]), uploader });
+    const s = await run(deps);
+    expect(s).toMatchObject({ previews: 6, originals: 6, failed: 0 });
+    expect(peak).toBeGreaterThanOrEqual(2);
+    expect((await db.counts()).original_uploaded).toBe(6);
+  });
+});
+
+describe('presign batching and rate limits', () => {
+  it('presigns a batch of originals in one /sync/uploads call instead of one per asset', async () => {
+    const api = new FakeApi();
+    let calls = 0; const orig = api.uploads.bind(api);
+    api.uploads = async (g, items) => { calls++; return orig(g, items); };
+    const lib = new FakeLibrary(Array.from({ length: 20 }, (_, i) => asset(i + 1)));
+    const { deps } = makeDeps({ library: lib, api });
+    const s = await run(deps);
+    expect(s).toMatchObject({ previews: 20, originals: 20, failed: 0 });
+    expect(calls).toBe(Math.ceil(20 / 8));                 // previews use manifest targets; originals presign per batch
+  });
+
+  it('a 429 on presign stops the phase without burning attempts; the next pass succeeds', async () => {
+    const api = new FakeApi();
+    let fail = true; const orig = api.uploads.bind(api);
+    api.uploads = async (g, items) => { if (fail) { const e = new Error('Too Many Requests') as Error & { status: number }; e.status = 429; throw e; } return orig(g, items); };
+    const { deps, db } = makeDeps({ library: new FakeLibrary([asset(1), asset(2)]), api });
+    let s = await run(deps);
+    expect(s.previews).toBe(2); expect(s.originals).toBe(0); expect(s.failed).toBe(2);
+    expect((await db.get('L1'))!.attempts).toBe(0);           // transient: not counted
+    expect((await db.get('L1'))!.state).toBe('preview_uploaded');
+    fail = false;
+    s = await run(deps);
+    expect(s.originals).toBe(2);
   });
 });

@@ -17,6 +17,11 @@ export class MemoryDb implements LocalDb {
     return [...this.rows.values()].filter((r) => r.state === state && (!opts.localIds || opts.localIds.includes(r.localId))).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, limit);
   }
   async get(id: string) { return this.rows.get(id) ?? null; }
+  async findByFile(filename: string, size?: number | null) {
+    const all = [...this.rows.values()].filter((r) => r.filename === filename && r.state !== 'deleted');
+    const exact = size != null ? all.filter((r) => r.size === size) : [];
+    return all.length > 1 && exact.length ? exact : all;
+  }
   async setState(id: string, patch: Parameters<LocalDb['setState']>[1]) { const r = this.rows.get(id)!; Object.assign(r, patch); }
   async allLocalIds() { return [...this.rows.values()].filter((r) => r.state !== 'deleted').map((r) => r.localId); }
   async markDeletedExcept(present: Set<string>) {
@@ -42,8 +47,12 @@ export const asset = (i: number, extra: Partial<LibraryAsset> = {}): LibraryAsse
 
 export class FakeLibrary implements Library {
   constructor(public assets: LibraryAsset[] = []) {}
-  async page({ createdAfter, after, first }: { createdAfter: number | null; after: string | null; first: number }) {
-    const sorted = [...this.assets].filter((a) => createdAfter === null || Date.parse(a.createdAt) > createdAfter).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  pages = 0;
+  /** Android-style: newest modification first, `after` is a row offset. */
+  async page({ after, first }: { after: string | null; first: number }) {
+    this.pages++;
+    const key = (a: LibraryAsset) => Date.parse(a.modifiedAt ?? a.createdAt);
+    const sorted = [...this.assets].sort((a, b) => key(b) - key(a));
     const start = after ? Number(after) : 0;
     const slice = sorted.slice(start, start + first);
     return { assets: slice, endCursor: String(start + slice.length), hasNextPage: start + slice.length < sorted.length };

@@ -150,14 +150,14 @@ describe.skipIf(!ADMIN || !WORKER || !process.env.S3_ENDPOINT)('derive / dedupe 
     const [ev] = await worker.db.execute(sql`insert into events (group_id, start_at, end_at, tz, center_lat, center_lon) values (${groupId}, ${t.toISOString()}::timestamptz, ${new Date(t.getTime() + 3600_000).toISOString()}::timestamptz, 'Europe/Oslo', 59.91, 10.76) returning id`) as unknown as Array<{ id: string }>;
     for (const s of staged) await worker.db.execute(sql`insert into event_assets (event_id, asset_id, blob_id, confidence, tier, source) values (${ev!.id}, ${s.assetId}, ${s.blobId}, 0.9, 'confirmed', 'auto')`);
     await titles(ctx, { groupId, eventIds: [ev!.id] });
-    const [row] = await worker.db.execute(sql`select e.title_auto, e.place_id, e.cover_blob_id, p.n_events from events e join places p on p.id = e.place_id where e.id = ${ev!.id}`) as unknown as Array<{ title_auto: string; place_id: string; cover_blob_id: string; n_events: number }>;
-    expect(row!.title_auto).toBe('Saturday evening');   // 21:00 local on 14 March 2026 (a Saturday), no city without geocoding
+    const [row] = await worker.db.execute(sql`select e.title_auto, e.place_id, e.cover_blob_id, p.n_events from events e join places p on p.id = e.place_id where e.id = ${ev!.id}`) as unknown as Array<{ title_auto: { nb: string; en: string }; place_id: string; cover_blob_id: string; n_events: number }>;
+    expect(row!.title_auto).toEqual({ en: 'Saturday evening', nb: 'Lørdag kveld' });   // 21:00 local on 14 March 2026 (a Saturday), no city without geocoding
     expect(row!.place_id).toBeTruthy(); expect(row!.n_events).toBe(1);
     expect(staged.map((s) => s.blobId)).toContain(row!.cover_blob_id);
     await worker.db.execute(sql`update places set name = 'Blå' where id = ${row!.place_id}`);
     await titles(ctx, { groupId, eventIds: [ev!.id] });
-    const [row2] = await worker.db.execute(sql`select title_auto from events where id = ${ev!.id}`) as unknown as Array<{ title_auto: string }>;
-    expect(row2!.title_auto).toBe('Blå, Saturday evening');
+    const [row2] = await worker.db.execute(sql`select title_auto from events where id = ${ev!.id}`) as unknown as Array<{ title_auto: { nb: string; en: string } }>;
+    expect(row2!.title_auto).toEqual({ en: 'Blå, Saturday evening', nb: 'Blå, lørdag kveld' });
   });
 
   it('hard delete removes the blob and its objects when unreferenced', async () => {

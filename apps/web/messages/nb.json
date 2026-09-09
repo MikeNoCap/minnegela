@@ -1,0 +1,323 @@
+{
+  "meta": {
+    "title": "Minnegela",
+    "description": "En søkemotor for vennegjengens minner."
+  },
+  "common": {
+    "save": "Lagre",
+    "cancel": "Avbryt",
+    "unnamed": "Uten navn",
+    "you": "deg",
+    "never": "aldri"
+  },
+  "locale": {
+    "label": "Språk"
+  },
+  "notFound": {
+    "title": "Ikke i din visning.",
+    "home": "Hjem"
+  },
+  "nav": {
+    "home": "Hjem",
+    "search": "Søk",
+    "people": "Folk",
+    "timeline": "Tidslinje",
+    "map": "Kart",
+    "review": "Gjennomgang",
+    "group": "Gruppe",
+    "searchPlaceholder": "Emma og Jonas · fest i mars · strand",
+    "signOut": "Logg ut ({email})",
+    "analyzing": "{count, plural, one {# bilde} other {# bilder}} analyseres fortsatt. Hendelsene blir bedre etter hvert som de blir ferdige."
+  },
+  "login": {
+    "tagline": "En søkemotor for vennegjengens minner.",
+    "checkInbox": "Sjekk innboksen",
+    "sentTo": "Vi har sendt en innloggingslenke til <b>{email}</b>. Under utvikling skrives lenken ut i API-konsollen.",
+    "useDifferent": "Bruk en annen adresse",
+    "email": "E-post",
+    "sendLink": "Send meg en innloggingslenke",
+    "linkInvalid": "Den lenken var ugyldig eller utløpt. Be om en ny.",
+    "privacy": "Venner ser bare hendelser dere var på sammen. Alt annet er ditt."
+  },
+  "noGroup": {
+    "title": "Du er ikke med i en gruppe ennå",
+    "intro": "Venner ser bare hendelser dere var på sammen. Alt annet er ditt.",
+    "startGroup": "Start en gruppe",
+    "groupName": "Gruppenavn",
+    "create": "Opprett",
+    "joinTitle": "Bli med via invitasjonskode",
+    "inviteCode": "Invitasjonskode",
+    "join": "Bli med"
+  },
+  "home": {
+    "people": "Folk",
+    "all": "Alle →",
+    "thisWeekLastYear": "Denne uken i fjor",
+    "quietShowing": "Viser stille hendelser også — de uten andre i, på stedene du pleier å være.",
+    "quietFolded": "{count, plural, one {# stille hendelse} other {# stille hendelser}} er lagt bort (bare deg, på stedene du pleier å være).",
+    "hideThem": "Skjul dem",
+    "showThem": "Vis dem",
+    "loading": "Laster tidslinjen din …",
+    "nothingTitle": "Ingenting er satt sammen ennå",
+    "nothingBody": "Installer appen på telefonen eller importer en mappe med CLI-et. Hendelser dukker opp her så snart de første bildene er analysert.",
+    "loosePhotos": "{count, plural, one {# løst bilde} other {# løse bilder}}",
+    "loadingMore": "Laster mer …"
+  },
+  "eventCard": {
+    "noPreview": "ingen forhåndsvisning ennå",
+    "open": "åpen",
+    "openTitle": "Åpnet for hele gruppen",
+    "quiet": "stille",
+    "quietTitle": "Lagt bort fra strømmen: ingen andre gjenkjent, på et vanlig sted",
+    "photos": "{count, plural, one {# bilde} other {# bilder}}",
+    "videos": "{count, plural, one {# video} other {# videoer}}",
+    "contributors": "{count, plural, one {# bidragsyter} other {# bidragsytere}}",
+    "people": "{count, plural, one {# person} other {# personer}}"
+  },
+  "timeline": {
+    "previousDay": "Forrige dag",
+    "nextDay": "Neste dag",
+    "day": "Dag",
+    "loosePhotos": "{count, plural, one {# løst bilde} other {# løse bilder}}",
+    "nothing": "Ingenting denne dagen."
+  },
+  "people": {
+    "members": "Medlemmer",
+    "namedPeople": "Navngitte personer",
+    "unnamed": "Uten navn",
+    "nameInReview": "Gi dem navn i Gjennomgang →",
+    "unnamedN": "Uten navn ({n})",
+    "noPeople": "Ingen personer ennå. Registrer ansiktet ditt i mobilappen, og bekreft treff i Gjennomgang.",
+    "recognitionOn": "ansiktsgjenkjenning på",
+    "notEnrolled": "ikke registrert"
+  },
+  "person": {
+    "notInView": "Denne personen er ikke i din visning.",
+    "nameLabel": "Navn",
+    "events": "{count, plural, one {# hendelse} other {# hendelser}}",
+    "photosInView": "{count, plural, one {# bilde} other {# bilder}} i din visning",
+    "with": "med {name} {count}×",
+    "rename": "Gi nytt navn",
+    "hide": "Skjul",
+    "eventsHeading": "Hendelser",
+    "photosHeading": "Bilder",
+    "you": "du"
+  },
+  "search": {
+    "placeholder": "Meg og Emma på stranda · København-tur · i fjor sommer",
+    "label": "Søk",
+    "button": "Søk",
+    "freeText": "Tolket som fritekst",
+    "events": "Hendelser",
+    "photos": "Bilder",
+    "failed": "Søket feilet. Prøv igjen.",
+    "noEvents": "Ingen hendelser passer. Prøv Bilder-modus eller færre filtre.",
+    "noPhotos": "Ingen bilder passer."
+  },
+  "chips": {
+    "remove": "fjern {label}",
+    "kind": {
+      "person": "person",
+      "time": "tid",
+      "place": "sted",
+      "event": "hendelse",
+      "contributor": "bidragsyter",
+      "type": "type",
+      "semantic": "semantisk",
+      "tag": "merkelapp"
+    }
+  },
+  "map": {
+    "banner": "Det interaktive kartet kommer i fase 3. Dette er listen over hendelsesnåler det vil vise.",
+    "noLocation": "Ingen hendelser med sted ennå.",
+    "osm": "OSM ↗"
+  },
+  "mediaGrid": {
+    "open": "Åpne",
+    "select": "Velg",
+    "probably": "trolig"
+  },
+  "mediaViewer": {
+    "close": "Lukk",
+    "previous": "Forrige",
+    "next": "Neste",
+    "fromPhone": "Fra telefonen til {owner}",
+    "unknownTime": "Ukjent tidspunkt",
+    "noLocation": "Ingen posisjon",
+    "probablyPart": "Trolig en del av denne hendelsen",
+    "possiblyPart": "Muligens en del av denne hendelsen",
+    "people": "Folk",
+    "looksLike": "Ser ut som",
+    "event": "Hendelse",
+    "otherAngles": "Andre vinkler av dette øyeblikket",
+    "similar": "Lignende bilder",
+    "download": "Last ned original",
+    "originalNotUploaded": "Originalen er ikke lastet opp ennå"
+  },
+  "event": {
+    "notInView": "Denne hendelsen er ikke i din visning.",
+    "frozen": "låst",
+    "frozenTitle": "Grensene flyttes aldri",
+    "confidence": {
+      "maybe_two_events": "Dette kan være to hendelser.",
+      "sure_one_event": "Vi er ganske sikre på at dette var én hendelse.",
+      "maybe_more_events": "Dette kan være mer enn én hendelse."
+    },
+    "photos": "{count, plural, one {# bilde} other {# bilder}}",
+    "videos": "{count, plural, one {# video} other {# videoer}}",
+    "noOneYet": "Ingen gjenkjent ennå",
+    "noOneYetDot": "Ingen gjenkjent ennå.",
+    "from": "Fra {names}",
+    "removeSelected": "Fjern {count} fra hendelsen",
+    "clearSelection": "Tøm utvalget",
+    "maybeTwo": "Dette kan være to hendelser.",
+    "splitAt": "Del ved {time}",
+    "show": "Vis:",
+    "everything": "Alt",
+    "justPerson": "bare {name}",
+    "justVideos": "bare videoer",
+    "loadingMedia": "laster bilder …",
+    "splitHere": "del her",
+    "splitHereTitle": "Del hendelsen her",
+    "noMedia": "Ingen bilder i denne visningen.",
+    "probablyFrom": "Trolig fra denne {tod}",
+    "alsoPossiblyFrom": "Muligens også fra denne {tod}",
+    "tod": {
+      "morning": "morgenen",
+      "afternoon": "ettermiddagen",
+      "night": "kvelden"
+    },
+    "people": "Folk",
+    "tagged": "merket",
+    "contributors": "Bidragsytere",
+    "timeline": "Tidslinje",
+    "openOsm": "Åpne i OpenStreetMap ↗",
+    "railNote": "Bilder fra alle bidragsytere, flettet etter tid. Bilder vi er mindre sikre på har et stille «trolig»; de minst sikre ligger i den sammenfoldede stripen.",
+    "more": "Mer",
+    "clickToRename": "Klikk for å gi nytt navn",
+    "titleLabel": "Tittel",
+    "visibleGroup": "Synlig for hele gruppen",
+    "visiblePeople": "Synlig for dem som var der",
+    "openedBy": "(åpnet av {name})",
+    "visibleTo": "Synlig for {names}",
+    "nobodyYet": "ingen ennå",
+    "reason": {
+      "contributor": "bidragsyter",
+      "face": "ansikt",
+      "tag": "merket",
+      "opened": "åpnet"
+    },
+    "interest": {
+      "markedQuiet": "Merket som stille · angre",
+      "markedQuietTitle": "Du merket denne som ikke verdt et kort i strømmen",
+      "kept": "Beholdt i strømmen · angre",
+      "keptTitle": "Du festet denne i strømmen",
+      "keep": "Behold i strømmen",
+      "keepTitle": "Denne hendelsen er lagt bort fra strømmen; hold den synlig",
+      "quiet": "Ikke verdt et kort",
+      "quietTitle": "Legg denne bort fra strømmen og ranger lignende hendelser lavere"
+    },
+    "open": {
+      "stop": "Slutt å vise til alle",
+      "show": "Vis til alle i gruppen",
+      "confirmTitle": "Vise denne hendelsen til hele gruppen?",
+      "confirmBody": "Dette viser {count, plural, one {# bilde} other {# bilder}} fra {names} til alle i gruppen, også folk som ikke var der. Enhver bidragsyter kan skru det av igjen.",
+      "confirm": "Vis til alle"
+    },
+    "tag": {
+      "button": "Noen andre var her også …",
+      "none": "Ingen personer å merke ennå.",
+      "remove": "fjern merking"
+    },
+    "merge": {
+      "button": "Slå sammen med →",
+      "confirm": "Slå sammen med «{title}»? Alle som kan se en av hendelsene vil se den sammenslåtte ({names})."
+    }
+  },
+  "group": {
+    "intro": "Venner ser bare hendelser dere var på sammen. Alt annet er ditt.",
+    "members": "Medlemmer",
+    "createInvite": "Lag invitasjon",
+    "inviteCode": "Invitasjonskode <code_>{code}</code_> · gyldig til {until}",
+    "role": {
+      "owner": "eier",
+      "member": "medlem"
+    },
+    "recognitionOn": "ansiktsgjenkjenning på",
+    "enrolledOff": "registrert, gjenkjenning av",
+    "notEnrolled": "ikke registrert",
+    "privacy": "Ditt personvern",
+    "consentLabel": "La gruppen gjenkjenne ansiktet mitt. Skrur du dette av, slettes ansiktsprofilen din; venner kan fortsatt merke deg manuelt.",
+    "privacyNote": "Ansiktsavtrykk forlater aldri serveren og vises eller eksporteres aldri. Bildene lagres hos Cloudflare i EU; serveren som kjører KI-en kan lese dem; ingen utenfor gruppen kan.",
+    "language": "Språk",
+    "languageNote": "Gjelder denne nettleseren. Hendelsestitler følger samme språk.",
+    "devices": "Enheter",
+    "synced": "synkronisert {when}",
+    "noDevices": "Ingen enheter ennå.",
+    "activity": "Aktivitet",
+    "system": "system",
+    "storage": "Lagring",
+    "photosVideos": "Bilder og videoer",
+    "bytes": "Størrelse",
+    "originals": "Originaler lastet opp",
+    "processing": "Behandling",
+    "retryFailed": "Prøv feilede på nytt",
+    "recluster": "Grupper på nytt",
+    "idle": "Ledig."
+  },
+  "review": {
+    "loadFailed": "Kunne ikke laste gjennomgangskøen.",
+    "nothing": "Ingenting å gå gjennom. Nye ansikter og usikre treff dukker opp her.",
+    "unnamed": "Personer uten navn",
+    "isThisThem": "Er dette dem?",
+    "candidate": "{name}?",
+    "unknown": "Ukjent",
+    "yes": "Ja",
+    "no": "Nei",
+    "maybeTwo": "Kan være to hendelser",
+    "splitAt": "Del ved {when}",
+    "photos": "{count, plural, one {# bilde} other {# bilder}}",
+    "namePlaceholder": "Gi denne personen et navn",
+    "name": "Navngi",
+    "existing": "Dette er … (eksisterende person)",
+    "hide": "Skjul"
+  },
+  "errors": {
+    "generic": "Noe gikk galt.",
+    "not_found": "Ikke funnet.",
+    "sign_in_required": "Du må logge inn.",
+    "not_allowed": "Ikke tillatt.",
+    "validation_failed": "Forespørselen var ikke gyldig.",
+    "rate_limited": "For mange forespørsler. Vent litt og prøv igjen.",
+    "internal_error": "Serveren fikk et problem. Prøv igjen om litt.",
+    "error": "Noe gikk galt.",
+    "group_not_found": "Den gruppen er ikke i din visning.",
+    "owner_only": "Bare gruppeeieren kan gjøre det.",
+    "invite_invalid": "Den invitasjonen er ugyldig, brukt eller utløpt.",
+    "boundary_edits_contributors_only": "Bare bidragsytere kan flytte grensene til en hendelse.",
+    "open_close_contributors_only": "Bare bidragsytere kan åpne eller lukke en hendelse.",
+    "split_contributors_only": "Bare bidragsytere kan dele en hendelse.",
+    "merge_contributors_only": "Bare bidragsytere kan slå sammen hendelser.",
+    "unknown_person": "Den personen er ikke i denne gruppen.",
+    "split_point_outside_event": "Delingspunktet må være inne i hendelsen.",
+    "event_not_found": "Den hendelsen er ikke i din visning.",
+    "no_assets_in_scope": "Ingen av de bildene er i din visning.",
+    "cluster_not_found": "Den ansiktsgruppen er allerede borte.",
+    "member_person_cannot_merge": "En person knyttet til et medlem kan ikke slås sammen bort.",
+    "unknown_target_person": "Personen det skal slås sammen med, er ikke i denne gruppen.",
+    "enroll_own_identity_only": "Bare det medlemmet kan registrere sitt eget ansikt.",
+    "no_faces_on_reference_photos": "Fant ingen ansikter på referansebildene ennå; de kan fortsatt være under analyse.",
+    "face_crop_not_ready": "Ingen utsnitt for dette ansiktet ennå.",
+    "face_crop_missing": "Ansiktsutsnittet mangler i lageret.",
+    "upload_exceeds_size_cap": "Den filen er over størrelsesgrensen.",
+    "device_not_found": "Den enheten er ikke registrert.",
+    "auth": {
+      "generic": "Kunne ikke sende lenken. Sjekk adressen og prøv igjen.",
+      "INVALID_TOKEN": "Den lenken var ugyldig eller utløpt. Be om en ny.",
+      "INVALID_EMAIL": "Det ser ikke ut som en e-postadresse.",
+      "USER_NOT_FOUND": "Ingen konto med den adressen ennå.",
+      "TOO_MANY_REQUESTS": "For mange forsøk. Vent litt og prøv igjen.",
+      "FAILED_TO_SEND_MAGIC_LINK": "Kunne ikke sende lenken. Prøv igjen om litt."
+    }
+  }
+}

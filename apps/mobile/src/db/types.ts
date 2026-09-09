@@ -32,6 +32,8 @@ export interface LocalDb {
   upsertLocal(rows: Array<Omit<LocalAsset, 'serverAssetId' | 'state' | 'lastError' | 'attempts' | 'updatedAt'> & { state?: LocalState }>): Promise<void>;
   listByState(state: LocalState, limit: number, opts?: { localIds?: string[] }): Promise<LocalAsset[]>;
   get(localId: string): Promise<LocalAsset | null>;
+  /** Match a picker result back to indexed library assets (Android's system picker returns no assetId). */
+  findByFile(filename: string, size?: number | null): Promise<LocalAsset[]>;
   setState(localId: string, patch: Partial<Pick<LocalAsset, 'state' | 'serverAssetId' | 'md5' | 'lastError' | 'attempts'>>): Promise<void>;
   allLocalIds(): Promise<string[]>;
   markDeletedExcept(presentIds: Set<string>): Promise<LocalAsset[]>;   // returns rows newly marked deleted that had a server id

@@ -1,4 +1,4 @@
-"""Job loop: batches `analyze` to keep the GPU fed, runs `identify`/`recluster` one at a time."""
+"""Job loop: batches `analyze` to keep the GPU fed, runs `identify`/`recluster`/`retag` one at a time."""
 from __future__ import annotations
 
 import logging
@@ -21,6 +21,7 @@ class Worker:
             "analyze": self._run_analyze_batch,
             "identify": self._run_single("identify"),
             "recluster": self._run_single("recluster"),
+            "retag": self._run_single("retag"),
         }
 
     # -- handlers ---------------------------------------------------------------------
@@ -34,13 +35,16 @@ class Worker:
                 try:
                     if kind == "identify":
                         from .jobs.identify import run_identify
-                        run_identify(job.payload)
+                        out = run_identify(job.payload)
+                    elif kind == "retag":
+                        from .jobs.retag import run_retag
+                        out = run_retag(job.payload)
                     else:
                         from .jobs.recluster import run_recluster
-                        run_recluster(job.payload)
+                        out = run_recluster(job.payload)
                     with db.connect() as conn, conn.transaction():
                         queue.complete(conn, job.id)
-                    log.info("job %s %s done", job.id, kind)
+                    log.info("job %s %s done: %s", job.id, kind, out)
                 except Exception as e:  # noqa: BLE001
                     log.exception("job %s %s failed", job.id, kind)
                     with db.connect() as conn, conn.transaction():
@@ -70,7 +74,7 @@ class Worker:
         if batch:
             self._handlers["analyze"](batch)
             processed += len(batch)
-        for kind in ("identify", "recluster"):
+        for kind in ("identify", "recluster", "retag"):
             with db.connect() as conn, conn.transaction():
                 jobs = queue.claim(conn, [kind], settings.worker_id, 1)
             if jobs:

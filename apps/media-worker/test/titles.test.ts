@@ -1,31 +1,106 @@
 import { describe, it, expect } from 'vitest';
-import { autoTitle, cleanTag } from '../src/jobs/titles.js';
+import { autoTitle, autoTitles, cleanTag, listNames, voteTags, dominantTag, interestScore, routineScore } from '../src/jobs/titles.js';
 import { resolveCapture } from '../src/jobs/derive.js';
 import { classifyPair } from '../src/jobs/dedupe.js';
 import { looksLikeScreenshot } from '../src/metadata.js';
 
 const base = { startAt: new Date('2026-03-13T20:30:00Z'), endAt: new Date('2026-03-14T02:00:00Z'), tz: 'Europe/Oslo', participants: [], placeName: null, city: null, tags: [] };
+const person = (name: string | null, birthday: string | null = null, userId: string | null = null) => ({ name, birthday, userId });
+/** n assets, the first `present` of them carrying `tag` at a present score. */
+const tagged = (n: number, present: number, tag: string, cat: string, score = 0.8) => Array.from({ length: n }, (_, i) => (i < present ? [{ tag, cat, score }] : [{ tag, cat, score: 0.3 }]));
 
 describe('autoTitle rule order (§9.10)', () => {
   it('birthday beats everything', () => {
-    expect(autoTitle({ ...base, participants: [{ name: 'Emma', birthday: '1995-03-14' }], placeName: 'Blå' })).toBe("Emma's birthday");
-    expect(autoTitle({ ...base, participants: [{ name: 'Emma', birthday: '1995-07-01' }], placeName: 'Blå' })).not.toContain('birthday');
+    expect(autoTitle({ ...base, participants: [person('Emma', '1995-03-14')], placeName: 'Blå' })).toBe("Emma's birthday");
+    expect(autoTitle({ ...base, participants: [person('Emma', '1995-07-01')], placeName: 'Blå' })).not.toContain('birthday');
   });
-  it('named place next', () => {
+  it('activity with names', () => {
+    const tags = tagged(10, 5, 'frisbee golf', 'activity');
+    expect(autoTitle({ ...base, tags, participants: [person('Mikkel'), person('Stefan'), person('Åsmul')] })).toBe('Frisbee golf with Mikkel, Stefan and Åsmul');
+    expect(autoTitle({ ...base, tags, participants: [person('Mikkel'), person(null)] })).toBe('Frisbee golf with Mikkel');
+  });
+  it('activity beats scene, scene beats objects', () => {
+    const tags = Array.from({ length: 10 }, () => [{ tag: 'beer', cat: 'drink', score: 0.9 }, { tag: 'beach', cat: 'scene', score: 0.8 }, { tag: 'swimming', cat: 'activity', score: 0.7 }]);
+    expect(autoTitle({ ...base, tags, city: 'Oslo' })).toBe('Swimming in Oslo');
+    const noActivity = tags.map((t) => t.filter((x) => x.cat !== 'activity'));
+    expect(autoTitle({ ...base, tags: noActivity, city: 'Oslo' })).toBe('Beach — Oslo');
+  });
+  it('named place with names, then place alone', () => {
+    expect(autoTitle({ ...base, placeName: 'Blå', participants: [person('Stefan')] })).toBe('Blå with Stefan');
     expect(autoTitle({ ...base, placeName: 'Blå' })).toBe('Blå, Friday evening');
   });
-  it('dominant tag with coverage', () => {
-    const tags = Array.from({ length: 10 }, (_, i) => (i < 5 ? [{ tag: 'a beach', score: 0.7 }] : [{ tag: 'a beach', score: 0.3 }]));
-    expect(autoTitle({ ...base, city: 'Oslo', tags })).toBe('Beach in Oslo');
-    const weak = Array.from({ length: 10 }, (_, i) => (i < 3 ? [{ tag: 'a beach', score: 0.7 }] : []));
+  it('needs coverage, not one lucky photo', () => {
+    const weak = tagged(10, 3, 'beach', 'scene');
     expect(autoTitle({ ...base, city: 'Oslo', tags: weak })).toBe('Friday evening — Oslo');
   });
-  it('fallback without city', () => {
+  it('mundane, people and utility tags never name an event', () => {
+    const tags = Array.from({ length: 6 }, () => [{ tag: 'computer screen', cat: 'mundane', score: 0.95 }, { tag: 'selfie', cat: 'people', score: 0.9 }, { tag: 'screenshot', cat: 'utility', score: 0.9 }]);
+    expect(autoTitle({ ...base, tags })).toBe('Friday evening');
+  });
+  it('names alone, then the fallback', () => {
+    expect(autoTitle({ ...base, participants: [person('Stefan'), person('Åsmul')] })).toBe('Friday evening with Stefan and Åsmul');
     expect(autoTitle({ ...base, startAt: new Date('2026-03-14T02:30:00Z') })).toBe('Saturday night');
   });
-  it('cleans tag prompts', () => {
+  it('legacy prompt-style tags still work', () => {
+    const tags = Array.from({ length: 10 }, (_, i) => (i < 5 ? [{ tag: 'a beach', score: 0.7 }] : [{ tag: 'a beach', score: 0.3 }]));
+    expect(autoTitle({ ...base, city: 'Oslo', tags })).toBe('Beach in Oslo');
+  });
+  it('lists names', () => {
+    expect(listNames(['A'])).toBe('A');
+    expect(listNames(['A', 'B'])).toBe('A and B');
+    expect(listNames(['A', 'B', 'C', 'D', 'E'])).toBe('A, B, C and 2 others');
+    expect(listNames(['A', 'B', 'C', 'D', 'E'], 'nb')).toBe('A, B, C og 2 andre');
+    expect(listNames(['A', 'B', 'C', 'D'], 'nb')).toBe('A, B, C og 1 annen');
     expect(cleanTag('a photo of food')).toBe('food');
-    expect(cleanTag('a concert')).toBe('concert');
+  });
+  it('speaks Norwegian with the same rule order', () => {
+    const tags = tagged(10, 5, 'frisbee golf', 'activity');
+    expect(autoTitle({ ...base, tags, participants: [person('Mikkel'), person('Stefan'), person('Åsmul')] }, 'nb')).toBe('Frisbeegolf med Mikkel, Stefan og Åsmul');
+    expect(autoTitle({ ...base, participants: [person('Emma', '1995-03-14')], placeName: 'Blå' }, 'nb')).toBe('Emmas bursdag');
+    expect(autoTitle({ ...base, participants: [person('Anders', '1995-03-14')] }, 'nb')).toBe("Anders' bursdag");
+    expect(autoTitle({ ...base, placeName: 'Blå', participants: [person('Stefan')] }, 'nb')).toBe('Blå med Stefan');
+    expect(autoTitle({ ...base, placeName: 'Blå' }, 'nb')).toBe('Blå, fredag kveld');
+    expect(autoTitle({ ...base, participants: [person('Stefan'), person('Åsmul')] }, 'nb')).toBe('Fredag kveld med Stefan og Åsmul');
+    expect(autoTitle({ ...base, startAt: new Date('2026-03-14T02:30:00Z') }, 'nb')).toBe('Lørdag natt');
+    const legacy = Array.from({ length: 10 }, (_, i) => (i < 5 ? [{ tag: 'a beach', score: 0.7 }] : [{ tag: 'a beach', score: 0.3 }]));
+    expect(autoTitle({ ...base, city: 'Oslo', tags: legacy }, 'nb')).toBe('Strand i Oslo');
+    expect(autoTitles({ ...base, city: 'Oslo' })).toEqual({ nb: 'Fredag kveld — Oslo', en: 'Friday evening — Oslo' });
+  });
+});
+
+describe('tag votes', () => {
+  it('coverage counts each tag once per asset and ignores absent scores', () => {
+    const votes = voteTags([[{ tag: 'beer', cat: 'drink', score: 0.9 }, { tag: 'beer', cat: 'drink', score: 0.8 }], [{ tag: 'beer', cat: 'drink', score: 0.2 }], []]);
+    expect(votes).toEqual([{ tag: 'beer', cat: 'drink', coverage: 1 / 3, meanScore: 0.9 }]);
+    expect(dominantTag(votes)).toBeNull();
+    expect(dominantTag(votes, 0.3)?.tag).toBe('beer');
+  });
+});
+
+describe('interest (§9.11)', () => {
+  const ev = { nAssets: 12, nVideos: 0, hours: 2, others: 0, facesPerAsset: 0, contributors: 1, votes: [], placeNamed: false, routine: 0, manual: null as -1 | 1 | null };
+  it('friends doing something specific rank high', () => {
+    const s = interestScore({ ...ev, others: 2, facesPerAsset: 1.5, votes: [{ tag: 'frisbee golf', cat: 'activity', coverage: 0.7, meanScore: 0.8 }] });
+    expect(s).toBeGreaterThan(0.55);
+  });
+  it('solo studio videos at a routine place fold away', () => {
+    const s = interestScore({ ...ev, nAssets: 6, nVideos: 6, facesPerAsset: 1, routine: 0.8, votes: [{ tag: 'playing guitar', cat: 'activity', coverage: 1, meanScore: 0.9 }, { tag: 'computer screen', cat: 'mundane', coverage: 0.8, meanScore: 0.9 }] });
+    expect(s).toBeLessThan(0.3);
+  });
+  it('a solo hike stays visible', () => {
+    const s = interestScore({ ...ev, nAssets: 20, hours: 3, votes: [{ tag: 'hiking', cat: 'activity', coverage: 0.6, meanScore: 0.8 }] });
+    expect(s).toBeGreaterThanOrEqual(0.3);
+  });
+  it('manual overrides win', () => {
+    expect(interestScore({ ...ev, routine: 1, manual: 1 })).toBe(0.9);
+    expect(interestScore({ ...ev, others: 3, facesPerAsset: 2, manual: -1 })).toBe(0.1);
+  });
+  it('routine grows with lonely repeat visits and reacts to feedback', () => {
+    expect(routineScore({ nEvents: 1, avgOthers: 0, multiContribFraction: 0, demoted: 0, promoted: 0 })).toBe(0);
+    expect(routineScore({ nEvents: 12, avgOthers: 0, multiContribFraction: 0, demoted: 0, promoted: 0 })).toBe(1);
+    expect(routineScore({ nEvents: 12, avgOthers: 2, multiContribFraction: 0, demoted: 0, promoted: 0 })).toBe(0);
+    expect(routineScore({ nEvents: 6, avgOthers: 0, multiContribFraction: 0, demoted: 3, promoted: 0 })).toBeGreaterThan(routineScore({ nEvents: 6, avgOthers: 0, multiContribFraction: 0, demoted: 0, promoted: 0 }));
+    expect(routineScore({ nEvents: 12, avgOthers: 0, multiContribFraction: 0, demoted: 0, promoted: 6 })).toBeLessThan(1);
   });
 });
 

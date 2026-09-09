@@ -38,7 +38,7 @@ export async function syncRoutes(app: FastifyInstance, ctx: AppContext) {
     const ext = kind === 'preview' ? 'jpg' : extFor(mime);
     const key = STORAGE_KEYS.staging(groupId, assetId, kind, ext);
     const cap = kind === 'preview' ? UPLOAD.maxPreviewBytes : UPLOAD.maxOriginalBytes;
-    if (bytes !== undefined && bytes > cap) throw badRequest(`${kind} exceeds the size cap`);
+    if (bytes !== undefined && bytes > cap) throw badRequest('upload_exceeds_size_cap', `${kind} exceeds the size cap`, { kind, cap });
     return ctx.storage.presignPut(key, { contentLength: bytes, contentType: kind === 'preview' ? 'image/jpeg' : mime });
   };
 
@@ -47,7 +47,7 @@ export async function syncRoutes(app: FastifyInstance, ctx: AppContext) {
     const v = await req.ctxFor(req.params.g);
     return withViewer(ctx.db, v, async (tx) => {
       const [dev] = await tx.select({ id: devices.id }).from(devices).where(sql`${devices.id} = ${req.body.deviceId}::uuid and ${devices.userId} = ${v.userId}::uuid`);
-      if (!dev) throw notFound('Device not found');
+      if (!dev) throw notFound('device_not_found', 'Device not found');
       const results: ManifestResponseT['results'] = [];
       for (const item of req.body.assets) {
         const [existing] = await rows<{ id: string; blob_id: string; preview_uploaded_at: Date | null; original_uploaded_at: Date | null; preview_key: string | null; storage_key: string | null; mime: string }>(tx, sql`

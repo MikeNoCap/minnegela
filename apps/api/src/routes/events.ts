@@ -2,10 +2,10 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { AppContext } from '../app.js';
-import { withViewer, enqueue, sql, encodeCursor, decodeCursor, WBS, visibleEventsWhere, visibleAssetsWhere, events, assets, type ViewerCtx, type Tx } from '../deps.js';
+import { withViewer, enqueue, sql, encodeCursor, decodeCursor, WBS, INTEREST, visibleEventsWhere, visibleAssetsWhere, events, assets, type ViewerCtx, type Tx } from '../deps.js';
 import { audit } from '../audit.js';
 import { forbidden, badRequest, notFound } from '../errors.js';
-import { rows, iso, EVENT_COLUMNS, MEDIA_COLUMNS, toEventCard, toMediaItem, confidenceCopy, visibleEventsFrom, type EventRow, type MediaRow, E, A, eventRows, mediaRows, uuidArr, intArr, ts } from '../dto.js';
+import { rows, iso, EVENT_COLUMNS, MEDIA_COLUMNS, toEventCard, toMediaItem, confidenceKey, titleSql, visibleEventsFrom, type EventRow, type MediaRow, E, A, eventRows, mediaRows, uuidArr, intArr, ts } from '../dto.js';
 
 const G = z.object({ g: z.string().uuid() });
 const ID = z.object({ id: z.string().uuid() });
@@ -24,22 +24,30 @@ async function reclusterAround(tx: Tx, groupId: string, from: Date, to: Date) {
 export async function eventRoutes(app: FastifyInstance, ctx: AppContext) {
   const r = app.withTypeProvider<ZodTypeProvider>();
 
-  r.get('/v1/groups/:g/events', { schema: { params: G, querystring: z.object({ from: z.coerce.date().optional(), to: z.coerce.date().optional(), people: csv.optional(), peopleMode: z.enum(['all', 'any']).default('all'), place: z.string().uuid().optional(), contributor: z.string().uuid().optional(), kind: z.enum(['event', 'trip', 'loose']).optional(), cursor: z.string().optional(), limit: z.coerce.number().int().min(1).max(100).default(30) }) } }, async (req) => {
+  r.get('/v1/groups/:g/events', { schema: { params: G, querystring: z.object({ from: z.coerce.date().optional(), to: z.coerce.date().optional(), people: csv.optional(), peopleMode: z.enum(['all', 'any']).default('all'), place: z.string().uuid().optional(), contributor: z.string().uuid().optional(), kind: z.enum(['event', 'trip', 'loose']).optional(), quiet: z.enum(['hide', 'only', 'all']).default('hide'), cursor: z.string().optional(), limit: z.coerce.number().int().min(1).max(100).default(30) }) } }, async (req) => {
     const v = await req.ctxFor(req.params.g);
     const q = req.query;
     const cur = decodeCursor<{ s: string; id: string }>(q.cursor);
     const people = q.people?.map(Number).filter((n) => Number.isInteger(n)) ?? [];
-    return withViewer(ctx.db, v, async (tx) => {
-      const list = await eventRows(tx, sql`select ${EVENT_COLUMNS} ${visibleEventsFrom(v)}
+    // §9.11 quiet events: scored below INTEREST.quiet (unscored events stay visible), folded out of the river by default
+    const quietWhere = sql`(e.interest is not null and e.interest < ${INTEREST.quiet})`;
+    const quietFilter = q.quiet === 'hide' ? sql`and not ${quietWhere}` : q.quiet === 'only' ? sql`and ${quietWhere}` : sql``;
+    const filters = sql`
         ${q.kind ? sql`and e.kind = ${q.kind}` : sql`and e.kind <> 'loose'`}
         ${q.from ? sql`and e.end_at >= ${ts(q.from)}` : sql``} ${q.to ? sql`and e.start_at <= ${ts(q.to)}` : sql``}
         ${people.length ? (q.peopleMode === 'any' ? sql`and e.person_ids && ${intArr(people)}` : sql`and e.person_ids @> ${intArr(people)}`) : sql``}
-        ${q.place ? sql`and e.place_id = ${q.place}::uuid` : sql``} ${q.contributor ? sql`and ${q.contributor}::uuid = any(e.contributor_ids)` : sql``}
+        ${q.place ? sql`and e.place_id = ${q.place}::uuid` : sql``} ${q.contributor ? sql`and ${q.contributor}::uuid = any(e.contributor_ids)` : sql``}`;
+    return withViewer(ctx.db, v, async (tx) => {
+      const list = await eventRows(tx, sql`select ${EVENT_COLUMNS} ${visibleEventsFrom(v)} ${filters} ${quietFilter}
         ${cur ? sql`and (e.start_at, e.id) < (${cur.s}::timestamptz, ${cur.id}::uuid)` : sql``}
         order by e.start_at desc, e.id desc limit ${q.limit + 1}`);
       const page = list.slice(0, q.limit);
       const last = page[page.length - 1];
-      return { items: page.map(toEventCard), nextCursor: list.length > q.limit && last ? encodeCursor({ s: last.start_at.toISOString(), id: last.id }) : null };
+      // first page only: how many events the default view folds away, so the UI can offer them
+      const quietCount = q.quiet === 'hide' && !cur
+        ? (await rows<{ n: number }>(tx, sql`select count(*)::int as n from events e left join places p on p.id = e.place_id where ${visibleEventsWhere(v, E)} ${filters} and ${quietWhere}`))[0]?.n ?? 0
+        : null;
+      return { items: page.map((e) => toEventCard(e, req.locale)), nextCursor: list.length > q.limit && last ? encodeCursor({ s: last.start_at.toISOString(), id: last.id }) : null, quietCount };
     });
   });
 
@@ -53,7 +61,7 @@ export async function eventRoutes(app: FastifyInstance, ctx: AppContext) {
         where ${visibleAssetsWhere(v, A)} and b.captured_at >= ${dayStart} and b.captured_at < ${dayEnd}
           and not exists (select 1 from event_assets ea join events e on e.id = ea.event_id where ea.asset_id = a.id and e.kind <> 'loose' and e.deleted_at is null)
         order by b.captured_at limit 500`);
-      return { day: req.query.day, events: evs.map(toEventCard), loose: loose.map(toMediaItem) };
+      return { day: req.query.day, events: evs.map((e) => toEventCard(e, req.locale)), loose: loose.map(toMediaItem) };
     });
   });
 
@@ -62,7 +70,7 @@ export async function eventRoutes(app: FastifyInstance, ctx: AppContext) {
     const bb = req.query.bbox?.split(',').map(Number) as [number, number, number, number] | undefined;
     return withViewer(ctx.db, v, async (tx) => {
       const pins = await rows<{ id: string; title: string | null; lat: number; lon: number; n_assets: number; start_at: Date; end_at: Date }>(tx, sql`
-        select e.id, coalesce(e.title_manual, e.title_auto) as title, e.center_lat as lat, e.center_lon as lon, e.n_assets, e.start_at, e.end_at
+        select e.id, ${titleSql(req.locale)} as title, e.center_lat as lat, e.center_lon as lon, e.n_assets, e.start_at, e.end_at
         from events e where ${visibleEventsWhere(v, E)} and e.center_lat is not null and e.kind <> 'loose'
         ${bb ? sql`and e.center_lat between ${bb[1]} and ${bb[3]} and e.center_lon between ${bb[0]} and ${bb[2]}` : sql``}
         ${req.query.from ? sql`and e.end_at >= ${ts(req.query.from)}` : sql``} ${req.query.to ? sql`and e.start_at <= ${ts(req.query.to)}` : sql``}
@@ -79,12 +87,12 @@ export async function eventRoutes(app: FastifyInstance, ctx: AppContext) {
       const participants = e.person_ids.length ? await rows<{ id: number; name: string | null; user_id: string | null; cover_face_id: string | null; hidden: boolean }>(tx, sql`select id, name, user_id, cover_face_id, hidden from persons where id = any(${intArr(e.person_ids)}) order by name`) : [];
       const contributors = await rows<{ user_id: string; display_name: string; n: number }>(tx, sql`select a.owner_user_id as user_id, u.display_name, count(*)::int as n from event_assets ea join assets a on a.id = ea.asset_id join users u on u.id = a.owner_user_id where ea.event_id = ${e.id}::uuid and a.deleted_at is null group by 1, 2 order by n desc`);
       return {
-        ...toEventCard(e),
+        ...toEventCard(e, req.locale),
         moments: moments.map((m) => ({ id: m.id, startAt: iso(m.start_at)!, endAt: iso(m.end_at)!, label: m.label, nAssets: m.n_assets, blobIds: m.blob_ids })),
         participants: participants.map((p) => ({ id: p.id, name: p.name, userId: p.user_id, coverFaceId: p.cover_face_id, hidden: p.hidden })),
         contributors: contributors.map((c) => ({ userId: c.user_id, displayName: c.display_name, nAssets: c.n })),
         suggestedSplits: (e.suggested_splits ?? []).map((d) => d.toISOString()),
-        confidenceCopy: confidenceCopy(e.confidence, e.suggested_splits?.length ?? 0),
+        confidenceKey: confidenceKey(e.confidence, e.suggested_splits?.length ?? 0),
       };
     });
   });
@@ -108,14 +116,21 @@ export async function eventRoutes(app: FastifyInstance, ctx: AppContext) {
     });
   });
 
-  r.patch('/v1/events/:id', { schema: { params: ID, body: z.object({ title: z.string().max(200).nullable().optional(), frozen: z.boolean().optional(), startAt: z.coerce.date().optional(), endAt: z.coerce.date().optional(), coverBlobId: z.string().uuid().nullable().optional() }) } }, async (req) => {
+  r.patch('/v1/events/:id', { schema: { params: ID, body: z.object({ title: z.string().max(200).nullable().optional(), frozen: z.boolean().optional(), startAt: z.coerce.date().optional(), endAt: z.coerce.date().optional(), coverBlobId: z.string().uuid().nullable().optional(), interest: z.enum(['keep', 'quiet', 'auto']).optional() }) } }, async (req) => {
     const { ctx: v, found: e } = await req.ctxWhere((tx, c) => findEvent(tx, c, req.params.id));
     const b = req.body;
     const isContributor = e.contributor_ids.includes(v.userId);
-    if ((b.frozen !== undefined || b.startAt || b.endAt) && !isContributor) throw forbidden('Boundary edits are for contributors');
+    if ((b.frozen !== undefined || b.startAt || b.endAt) && !isContributor) throw forbidden('boundary_edits_contributors_only', 'Boundary edits are for contributors');
     return withViewer(ctx.db, v, async (tx) => {
       if (b.title !== undefined) await tx.execute(sql`update events set title_manual = ${b.title} where id = ${e.id}::uuid`);
       if (b.coverBlobId !== undefined) await tx.execute(sql`update events set cover_blob_id = ${b.coverBlobId}::uuid where id = ${e.id}::uuid`);
+      if (b.interest !== undefined) {
+        // apply immediately so the feed reacts; the titles job re-scores with the same override and updates the place's routine factor
+        const manual = b.interest === 'keep' ? 1 : b.interest === 'quiet' ? -1 : null;
+        const now = manual === 1 ? Math.max(e.interest ?? 0, INTEREST.manualHigh) : manual === -1 ? Math.min(e.interest ?? 1, INTEREST.manualLow) : e.interest;
+        await tx.execute(sql`update events set interest_manual = ${manual}, interest = ${now} where id = ${e.id}::uuid`);
+        await enqueue(tx, 'titles', { groupId: v.groupId, eventIds: [e.id] }, { runAfterSeconds: 2 });
+      }
       if (b.frozen !== undefined) {
         await tx.execute(sql`update events set frozen = ${b.frozen} where id = ${e.id}::uuid`);
         if (b.frozen) await tx.execute(sql`insert into event_constraints (group_id, kind, event_id, by_user_id) values (${v.groupId}::uuid, 'frozen', ${e.id}::uuid, ${v.userId}::uuid)`);
@@ -127,13 +142,13 @@ export async function eventRoutes(app: FastifyInstance, ctx: AppContext) {
       }
       await audit(tx, v, 'event.update', { type: 'event', id: e.id }, b as Record<string, unknown>, req);
       const updated = await findEvent(tx, v, e.id);
-      return toEventCard(updated ?? e);
+      return toEventCard(updated ?? e, req.locale);
     });
   });
 
   const setOpen = (open: boolean) => async (req: FastifyRequest<{ Params: { id: string } }>) => {
     const { ctx: v, found: e } = await req.ctxWhere((tx, c) => findEvent(tx, c, req.params.id));
-    if (!e.contributor_ids.includes(v.userId)) throw forbidden('Only contributors can open or close an event');
+    if (!e.contributor_ids.includes(v.userId)) throw forbidden('open_close_contributors_only', 'Only contributors can open or close an event');
     return withViewer(ctx.db, v, async (tx) => {
       await tx.execute(open
         ? sql`update events set is_public_to_group = true, opened_by_user_id = ${v.userId}::uuid, opened_at = now() where id = ${e.id}::uuid`
@@ -168,7 +183,7 @@ export async function eventRoutes(app: FastifyInstance, ctx: AppContext) {
     const { ctx: v, found: e } = await req.ctxWhere((tx, c) => findEvent(tx, c, req.params.id));
     await withViewer(ctx.db, v, async (tx) => {
       const [p] = await rows<{ id: number }>(tx, sql`select id from persons where id = ${req.body.personId} and group_id = ${v.groupId}::uuid`);
-      if (!p) throw badRequest('Unknown person');
+      if (!p) throw badRequest('unknown_person', 'Unknown person');
       await tx.execute(sql`insert into event_person_tags (event_id, person_id, by_user_id) values (${e.id}::uuid, ${req.body.personId}, ${v.userId}::uuid) on conflict do nothing`);
       await audit(tx, v, 'event.tag', { type: 'event', id: e.id }, { personId: req.body.personId }, req);
     });
@@ -186,8 +201,8 @@ export async function eventRoutes(app: FastifyInstance, ctx: AppContext) {
 
   r.post('/v1/events/:id/split', { schema: { params: ID, body: z.object({ at: z.coerce.date() }) } }, async (req, reply) => {
     const { ctx: v, found: e } = await req.ctxWhere((tx, c) => findEvent(tx, c, req.params.id));
-    if (!e.contributor_ids.includes(v.userId)) throw forbidden('Only contributors can split an event');
-    if (req.body.at <= e.start_at || req.body.at >= e.end_at) throw badRequest('Split point must be inside the event');
+    if (!e.contributor_ids.includes(v.userId)) throw forbidden('split_contributors_only', 'Only contributors can split an event');
+    if (req.body.at <= e.start_at || req.body.at >= e.end_at) throw badRequest('split_point_outside_event', 'Split point must be inside the event');
     await withViewer(ctx.db, v, async (tx) => {
       await tx.execute(sql`insert into event_constraints (group_id, kind, event_id, at, by_user_id) values (${v.groupId}::uuid, 'pin_boundary', ${e.id}::uuid, ${ts(req.body.at)}, ${v.userId}::uuid)`);
       await tx.execute(sql`update events set suggested_splits = array_remove(suggested_splits, ${ts(req.body.at)}) where id = ${e.id}::uuid`);
@@ -199,10 +214,10 @@ export async function eventRoutes(app: FastifyInstance, ctx: AppContext) {
 
   r.post('/v1/events/:id/merge', { schema: { params: ID, body: z.object({ withEventId: z.string().uuid() }) } }, async (req, reply) => {
     const { ctx: v, found: e } = await req.ctxWhere((tx, c) => findEvent(tx, c, req.params.id));
-    if (!e.contributor_ids.includes(v.userId)) throw forbidden('Only contributors can merge events');
+    if (!e.contributor_ids.includes(v.userId)) throw forbidden('merge_contributors_only', 'Only contributors can merge events');
     return withViewer(ctx.db, v, async (tx) => {
       const other = await findEvent(tx, v, req.body.withEventId);
-      if (!other) throw notFound('Event not found');
+      if (!other) throw notFound('event_not_found', 'Event not found');
       const ids = (await rows<{ asset_id: string }>(tx, sql`select asset_id from event_assets where event_id in (${e.id}::uuid, ${other.id}::uuid)`)).map((x) => x.asset_id);
       await tx.execute(sql`insert into event_constraints (group_id, kind, event_id, asset_ids, by_user_id) values (${v.groupId}::uuid, 'keep_together', ${e.id}::uuid, ${uuidArr(ids)}, ${v.userId}::uuid)`);
       if (e.is_public_to_group || other.is_public_to_group) await tx.execute(sql`update events set is_public_to_group = true where id in (${e.id}::uuid, ${other.id}::uuid)`);
@@ -218,7 +233,7 @@ export async function eventRoutes(app: FastifyInstance, ctx: AppContext) {
     const { ctx: v, found: e } = await req.ctxWhere((tx, c) => findEvent(tx, c, req.params.id));
     await withViewer(ctx.db, v, async (tx) => {
       const visible = await rows<{ id: string; blob_id: string }>(tx, sql`select a.id, a.blob_id from assets a where a.id = any(${uuidArr(req.body.assetIds)}) and ${visibleAssetsWhere(v, A)}`);
-      if (!visible.length) throw badRequest('No such assets in your scope');
+      if (!visible.length) throw badRequest('no_assets_in_scope', 'No such assets in your scope');
       const ids = visible.map((a) => a.id);
       await tx.execute(sql`insert into event_constraints (group_id, kind, event_id, asset_ids, by_user_id) values (${v.groupId}::uuid, ${kind}, ${e.id}::uuid, ${uuidArr(ids)}, ${v.userId}::uuid)`);
       if (kind === 'exclude') await tx.execute(sql`delete from event_assets where event_id = ${e.id}::uuid and asset_id = any(${uuidArr(ids)})`);

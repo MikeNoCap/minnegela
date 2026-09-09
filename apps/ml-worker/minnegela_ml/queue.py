@@ -9,7 +9,7 @@ from typing import Any, Sequence
 
 import psycopg
 
-ML_KINDS: tuple[str, ...] = ("analyze", "identify", "recluster")
+ML_KINDS: tuple[str, ...] = ("analyze", "identify", "recluster", "retag")
 
 
 @dataclass
@@ -28,6 +28,8 @@ def dedupe_key(kind: str, payload: dict[str, Any]) -> str | None:
         return None if payload.get("blobId") else f"identify:{payload['groupId']}"
     if kind == "titles":
         return None if payload.get("eventIds") else f"titles:{payload['groupId']}"
+    if kind == "retag":
+        return f"retag:{payload['groupId']}"
     return None
 
 

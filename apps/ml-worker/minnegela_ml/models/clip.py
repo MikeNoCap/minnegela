@@ -1,4 +1,7 @@
-"""OpenCLIP ViT-B/16 (laion2b_s34b_b88k), fp32 (DESIGN §6). Lazy-loaded; one instance per process."""
+"""OpenCLIP ViT-B/16 (laion2b_s34b_b88k), fp32 (DESIGN §6). Lazy-loaded; one instance per process.
+
+Tags: raw cosine against the ensembled vocabulary prompts (vocab.py), calibrated per group by
+calibrate.py. The text tower runs once per process for the vocabulary and on demand for search."""
 from __future__ import annotations
 
 import logging
@@ -8,8 +11,10 @@ from typing import Sequence
 import numpy as np
 from PIL import Image
 
+from ..calibrate import TagResult, TagStats, tag_result
 from ..config import settings
-from ..constants import CLIP_MODEL, CLIP_MODEL_TAG, CLIP_PRETRAINED, UTILITY_TAG_THRESHOLD, UTILITY_TAGS, ZERO_SHOT_PROMPTS
+from ..constants import CLIP_MODEL, CLIP_MODEL_TAG, CLIP_PRETRAINED
+from ..vocab import VOCAB
 from . import ModelUnavailable
 
 log = logging.getLogger(__name__)
@@ -43,11 +48,21 @@ class Clip:
         self.model = model.eval()
         self.preprocess = preprocess
         self.tokenizer = open_clip.get_tokenizer(CLIP_MODEL)
-        self._prompt_embs = self.embed_text(list(ZERO_SHOT_PROMPTS))
+        self.vocab_embs = self._embed_vocab()
 
     @staticmethod
     def _norm(x: np.ndarray) -> np.ndarray:
         return x / np.clip(np.linalg.norm(x, axis=-1, keepdims=True), 1e-9, None)
+
+    def _embed_vocab(self) -> np.ndarray:
+        """(n_keys, 512): each key is the normalised mean of its prompt embeddings (prompt ensembling)."""
+        prompts = [p for t in VOCAB for p in t.prompts]
+        flat = self.embed_text(prompts)
+        out, i = [], 0
+        for t in VOCAB:
+            out.append(flat[i:i + len(t.prompts)].mean(axis=0))
+            i += len(t.prompts)
+        return self._norm(np.stack(out)).astype(np.float32)
 
     def embed_images(self, images: Sequence[Image.Image], batch_size: int = 32) -> np.ndarray:
         out = []
@@ -58,31 +73,20 @@ class Clip:
                 out.append(feats)
         return self._norm(np.concatenate(out, axis=0)) if out else np.zeros((0, 512), dtype=np.float32)
 
-    def embed_text(self, texts: Sequence[str]) -> np.ndarray:
+    def embed_text(self, texts: Sequence[str], batch_size: int = 256) -> np.ndarray:
+        out = []
         with self.torch.no_grad():
-            toks = self.tokenizer(list(texts)).to(self.device)
-            feats = self.model.encode_text(toks).float().cpu().numpy()
-        return self._norm(feats)
+            for i in range(0, len(texts), batch_size):
+                toks = self.tokenizer(list(texts[i:i + batch_size])).to(self.device)
+                out.append(self.model.encode_text(toks).float().cpu().numpy())
+        return self._norm(np.concatenate(out, axis=0)) if out else np.zeros((0, 512), dtype=np.float32)
 
-    def zero_shot_tags(self, emb: np.ndarray, top: int = 5) -> list[dict]:
-        """Cosine to each prompt; top-k as [{tag, score}]. No softmax: scores stay comparable across images."""
-        return zero_shot_from_scores(emb @ self._prompt_embs.T, top)
+    def raw_scores(self, emb: np.ndarray) -> np.ndarray:
+        """Cosine of one embedding (512,) or many (n, 512) against every vocabulary key."""
+        return emb @ self.vocab_embs.T
 
-    def quality_contrast(self, emb: np.ndarray) -> float:
-        """cos('a beautiful photo') - cos('a blurry accidental photo'), for highlight selection (§6.4)."""
-        i_good = ZERO_SHOT_PROMPTS.index("a beautiful photo")
-        i_bad = ZERO_SHOT_PROMPTS.index("a blurry accidental photo")
-        s = emb @ self._prompt_embs.T
-        return float(s[i_good] - s[i_bad])
-
-
-def zero_shot_from_scores(scores: np.ndarray, top: int = 5) -> list[dict]:
-    idx = np.argsort(-scores)[:top]
-    return [{"tag": ZERO_SHOT_PROMPTS[int(i)], "score": round(float(scores[int(i)]), 4)} for i in idx]
-
-
-def is_utility(tags: list[dict]) -> bool:
-    return any(t["tag"] in UTILITY_TAGS and t["score"] >= UTILITY_TAG_THRESHOLD for t in tags)
+    def tag(self, emb: np.ndarray, stats: TagStats | None) -> TagResult:
+        return tag_result(self.raw_scores(emb), stats)
 
 
 def clip() -> Clip:

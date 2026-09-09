@@ -256,9 +256,11 @@ Alternatives: ViT-L/14 (2–3× better retrieval, but ~4× slower and Pascal has
 
 ### 6.3 Derived signals from the same embedding
 
-Zero-shot tags: cosine similarity against ~40 text prompts ("a photo of food", "a screenshot", "a document", "a meme", "a selfie", "a group of people", "a concert", "a beach", "a city street at night", "a car", "a pet", ...). Store the top 5 with scores in `assets.tags jsonb`. Cheap, useful for filters and event titles, and for exclusion rules (screenshot/document/meme → `is_utility = true`).
+Zero-shot tags against a ~200-key vocabulary (`apps/ml-worker/minnegela_ml/vocab.py`): activities ("frisbee golf", "playing guitar", "hiking"), scenes, food and drink ("beer", "wine"), objects, animals, people composition, *mundane* home-office/screen shots, and utility (screenshot, document, receipt, meme). Each key is the mean of a few prompt embeddings (prompt ensembling) and carries a category that is stored next to the tag, so no consumer needs the prompt list.
 
-Screenshot detection is also done from metadata (PNG, no camera make, dimensions equal to a known screen size). Belt and braces.
+**Calibration is the whole trick.** Raw cosine is not comparable across prompts: "a screenshot" or "a meme" sits at ~0.21 on every image while a real frisbee only lifts "frisbee golf" to ~0.28, so a raw top-k is dominated by a few attractor prompts (measured on the first library: "screenshot" in the top 5 of 94 % of photos). Tags are therefore per-tag robust z-scores over the group's own library, `z = (cos − median) / (1.4826·MAD)`, squashed to a 0..1 `score` (z 2.5 → 0.6 = `TAGS.present`; checked on the first library, weaker hits were forest paths tagged frisbee golf). The median/MAD per tag live in `ml.tag_stats`, recomputed by the `retag` job from the stored `clip_emb` column (no image pass: a whole library re-tags in seconds, and faces are never touched). `retag` is debounced per group after analysis bursts and forced by the CLI or a vocabulary bump. Until a group has 40 analysed blobs, images are normalised across the vocabulary instead.
+
+Per-image tags stay noisy on purpose (≈200 candidates, best chance z ≈ 2.7); every consumer votes across an event — a tag has to be present on ≥ 40 % of the assets before it names or scores the event. `is_utility` needs the top utility tag at `TAGS.utility` *and* a raw cosine above the "a photo taken with a phone camera" anchor, so graphic-looking party photos are not screenshots. Screenshot detection is also done from metadata (PNG, no camera make, dimensions equal to a known screen size). Belt and braces.
 
 ### 6.4 Quality and aesthetics
 
@@ -469,17 +471,30 @@ Re-clustering must not churn event ids or lose user work.
 
 ### 9.10 Automatic titles (deliberately simple)
 
-Rule-based, in this order:
+Rule-based, in this order (`apps/media-worker/src/jobs/titles.ts`):
 
 1. Manual title.
 2. Calendar match (future).
 3. Birthday match: the event overlaps a member's birthday (±1 day) and that member is a participant → "{Name}'s birthday".
-4. Trip context (phase 3) → "{City} trip, day 2".
-5. Named place → "{Place name}, {weekday} {evening|afternoon|morning}".
-6. Dominant tag with high coverage ("beach", "concert", "hike", "dinner") → "{Tag} in {City}".
-7. Fallback: "{Weekday} {time-of-day} — {City}".
+4. Dominant tag with names → "Frisbee golf with Mikkel, Stefan and Åsmul". The dominant tag is the best-covered tag (≥ 40 % of assets) in category order activity → scene → food → drink → animal → object; people/mundane/utility tags never name an event. Names are the recognised, named participants (up to three, then "and 2 others"); the photographer is not excluded because titles are group-wide.
+5. Named place with names → "Blå with Stefan and Åsmul".
+6. Dominant tag alone → "Swimming in Oslo" / "Beach — Oslo".
+7. Named place → "{Place name}, {weekday} {evening|afternoon|morning}".
+8. Names alone → "Friday evening with Stefan and Åsmul".
+9. Fallback: "{Weekday} {time-of-day} — {City}".
 
-No generative model in v1. Titles are about recognisability, and "Friday night — Oslo, 14 March" is more recognisable than anything an LLM would invent.
+No generative model in v1. Titles are about recognisability, and "Friday night — Oslo, 14 March" is more recognisable than anything an LLM would invent. Cities come from Nominatim reverse geocoding of the event centre (`GEOCODE=1`, 1 req/s, cached on `places.city`).
+
+### 9.11 Feed interest ("quiet events")
+
+Not every reconstructed event deserves a card: a solo evening in the studio filming the monitor is a real event but not a memory. Each event gets `events.interest` ∈ [0, 1] from the titles job (`interestScore`, weights in `INTEREST`):
+
+- **+** named people who are *not* the photographers (strongest signal), faces per asset, a second contributor, the strongest activity/scene/food coverage, size, duration, a user-named place;
+- **−** the place's *routine* factor, *mundane* tag coverage (computer screen, desk, music software, groceries…), video-only events.
+
+`places.routine` ∈ [0, 1] is learned per place: many events, few other people, one contributor → routine; promote/demote feedback nudges it (`routineScore`). So the studio becomes routine after a handful of solo sessions, while a party there with four recognised friends still scores high.
+
+The feed hides events below `INTEREST.quiet` by default and offers "N quiet events folded away"; `quiet=all|only` on the list endpoint. Members can mark an event "Not worth a card" or "Keep in feed" (`interest_manual`), which applies immediately and feeds the place's routine factor on the next titles pass.
 
 ## 10. Data model
 

@@ -44,17 +44,8 @@ WBS = {
     "algo_version": 1,
 }
 
-ZERO_SHOT_PROMPTS = [
-    "a photo of food", "a photo of a drink", "a screenshot", "a document", "a receipt", "a meme",
-    "a selfie", "a group of people", "a portrait of one person", "a concert", "a party", "a beach",
-    "a city street at night", "a city street in daytime", "a car", "a pet", "a dog", "a cat",
-    "a mountain landscape", "a forest", "a lake", "snow", "a hike", "a boat", "an airplane window",
-    "a hotel room", "a living room", "a kitchen", "a restaurant", "a bar", "a cabin", "a birthday cake",
-    "a wedding", "a sports event", "a sunset", "fireworks", "a text message conversation", "a map",
-    "a blurry accidental photo", "a beautiful photo",
-]
-UTILITY_TAGS = {"a screenshot", "a document", "a receipt", "a meme", "a text message conversation", "a map"}
-UTILITY_TAG_THRESHOLD = 0.28
+# Tag calibration (§6.3). The vocabulary itself lives in vocab.py; these mirror TAGS in shared/constants.ts.
+TAGS = {"present": 0.6, "top": 8, "utility": 0.6, "vocab_version": 3}
 
 CLIP_MODEL = "ViT-B-16"
 CLIP_PRETRAINED = "laion2b_s34b_b88k"

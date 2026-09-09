@@ -3,7 +3,7 @@ import type { ZodTypeProvider } from 'fastify-type-provider-zod';
 import { z } from 'zod';
 import type { AppContext } from '../app.js';
 import { withViewer, sql, visibleEventsWhere, visibleAssetsWhere, events, assets, type SearchChip } from '../deps.js';
-import { rows, EVENT_COLUMNS, MEDIA_COLUMNS, toEventCard, toMediaItem, visibleEventsFrom, type EventRow, type MediaRow, E, A, eventRows, mediaRows, intArr, ts } from '../dto.js';
+import { rows, EVENT_COLUMNS, MEDIA_COLUMNS, toEventCard, toMediaItem, titleSql, visibleEventsFrom, type EventRow, type MediaRow, E, A, eventRows, mediaRows, intArr, ts } from '../dto.js';
 import { parseQuery } from '../search/parser.js';
 import { textEmbedding } from '../search/embed.js';
 
@@ -21,8 +21,9 @@ export async function searchRoutes(app: FastifyInstance, ctx: AppContext) {
         mePersonId: v.personId,
         mode: req.query.mode,
         matchEventTitle: async (t) => {
-          const [hit] = await rows<{ id: string; title: string; score: number }>(tx, sql`select e.id, coalesce(e.title_manual, e.title_auto) as title, similarity(coalesce(e.title_manual, e.title_auto), ${t}) as score
-            from events e where ${visibleEventsWhere(v, E)} and coalesce(e.title_manual, e.title_auto) is not null and similarity(coalesce(e.title_manual, e.title_auto), ${t}) >= 0.35 order by score desc limit 1`);
+          const title = titleSql(req.locale);
+          const [hit] = await rows<{ id: string; title: string; score: number }>(tx, sql`select e.id, ${title} as title, similarity(${title}, ${t}) as score
+            from events e where ${visibleEventsWhere(v, E)} and ${title} is not null and similarity(${title}, ${t}) >= 0.35 order by score desc limit 1`);
           return hit ?? null;
         },
       });
@@ -35,7 +36,7 @@ export async function searchRoutes(app: FastifyInstance, ctx: AppContext) {
           ${query.eventId ? sql`and e.id = ${query.eventId}::uuid` : sql``}
           ${query.mediaType === 'video' ? sql`and e.n_videos > 0` : sql``}
           order by e.start_at desc limit ${req.query.limit}`);
-        return { parsed: chips, query, mode: 'events' as const, events: list.map(toEventCard) };
+        return { parsed: chips, query, mode: 'events' as const, events: list.map((e) => toEventCard(e, req.locale)) };
       }
 
       // media mode: people via faces on the asset OR via event participation ("from an event with Emma")

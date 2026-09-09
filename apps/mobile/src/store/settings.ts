@@ -1,7 +1,10 @@
 import { z } from 'zod';
+import { LOCALES } from '@minnegela/shared';
 
 /** Persisted in sync_state under key `settings` as JSON. */
 export const Settings = z.object({
+  /** UI language; unset means the product default (Norwegian). */
+  locale: z.enum(LOCALES).optional(),
   apiUrl: z.string().default(process.env.EXPO_PUBLIC_API_URL ?? ''),
   webUrl: z.string().default(process.env.EXPO_PUBLIC_WEB_URL ?? ''),
   groupId: z.string().nullable().default(null),

@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 /** Job kinds consumed from the Postgres `jobs` table. Node and Python workers share this contract. */
-export const JobKind = z.enum(['derive', 'analyze', 'identify', 'dedupe', 'recluster', 'titles', 'reconcile_staging', 'hard_delete', 'export']);
+export const JobKind = z.enum(['derive', 'analyze', 'identify', 'dedupe', 'recluster', 'retag', 'titles', 'reconcile_staging', 'hard_delete', 'export']);
 export type JobKind = z.infer<typeof JobKind>;
 
 /** Which worker consumes which kind. Used by the consumers to build their claim query. */
@@ -15,6 +15,7 @@ export const JOB_OWNER: Record<JobKind, 'media' | 'ml'> = {
   analyze: 'ml',
   identify: 'ml',
   recluster: 'ml',
+  retag: 'ml',
 };
 
 export const JobPayloads = {
@@ -23,6 +24,7 @@ export const JobPayloads = {
   identify: z.object({ groupId: z.string().uuid(), blobId: z.string().uuid().optional(), personId: z.number().int().optional() }),
   dedupe: z.object({ blobId: z.string().uuid(), groupId: z.string().uuid() }),
   recluster: z.object({ groupId: z.string().uuid(), from: z.string().datetime().optional(), to: z.string().datetime().optional(), full: z.boolean().optional() }),
+  retag: z.object({ groupId: z.string().uuid(), force: z.boolean().optional() }),
   titles: z.object({ groupId: z.string().uuid(), eventIds: z.array(z.string().uuid()).optional() }),
   reconcile_staging: z.object({ groupId: z.string().uuid().optional() }),
   hard_delete: z.object({ assetId: z.string().uuid() }),
@@ -40,6 +42,8 @@ export function jobDedupeKey(kind: JobKind, payload: Record<string, unknown>): s
       return payload.blobId ? null : `identify:${payload.groupId}`;
     case 'titles':
       return payload.eventIds ? null : `titles:${payload.groupId}`;
+    case 'retag':
+      return `retag:${payload.groupId}`;
     default:
       return null;
   }

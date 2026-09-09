@@ -37,9 +37,19 @@ export async function openLocalDb(name = 'minnegela.db'): Promise<LocalDb> {
 class SqliteLocalDb implements LocalDb {
   constructor(private db: SQLite.SQLiteDatabase) {}
 
+  /** expo-sqlite has one connection and no nested transactions: two concurrent callers (an enrollment
+   * import while a sync pass runs, two picks imported at once) would hit "cannot start a transaction
+   * within a transaction". Transactions are queued so only one is open at a time. */
+  private txQueue: Promise<unknown> = Promise.resolve();
+  private transaction<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.txQueue.then(async () => { let out!: T; await this.db.withTransactionAsync(async () => { out = await fn(); }); return out; });
+    this.txQueue = run.catch(() => {});
+    return run;
+  }
+
   async upsertLocal(rows: Parameters<LocalDb['upsertLocal']>[0]) {
     const now = new Date().toISOString();
-    await this.db.withTransactionAsync(async () => {
+    await this.transaction(async () => {
       for (const r of rows) {
         await this.db.runAsync(
           `insert into local_assets (local_id, md5, size, mime, filename, is_video, created_at, modified_at, lat, lon, w, h, dur, album_ids, album_names, is_screenshot, uri, state, updated_at)
@@ -63,6 +73,14 @@ class SqliteLocalDb implements LocalDb {
     const r = await this.db.getFirstAsync<Row>('select * from local_assets where local_id = ?', [localId]);
     return r ? fromRow(r) : null;
   }
+  async findByFile(filename: string, size?: number | null) {
+    const rows = (await this.db.getAllAsync<Row>("select * from local_assets where filename = ? and state <> 'deleted' order by created_at desc limit 10", [filename])).map(fromRow);
+    if (rows.length > 1 && size != null) {
+      const exact = rows.filter((r) => r.size === size);
+      if (exact.length) return exact;
+    }
+    return rows;
+  }
   async setState(localId: string, patch: Parameters<LocalDb['setState']>[1]) {
     const sets: string[] = ['updated_at = ?']; const vals: SQLite.SQLiteBindValue[] = [new Date().toISOString()];
     if (patch.state !== undefined) { sets.push('state = ?'); vals.push(patch.state); }
@@ -78,7 +96,7 @@ class SqliteLocalDb implements LocalDb {
   }
   async markDeletedExcept(presentIds: Set<string>) {
     const rows = (await this.db.getAllAsync<Row>("select * from local_assets where state <> 'deleted'")).map(fromRow).filter((r) => !presentIds.has(r.localId));
-    await this.db.withTransactionAsync(async () => {
+    await this.transaction(async () => {
       for (const r of rows) await this.db.runAsync("update local_assets set state = 'deleted', updated_at = ? where local_id = ?", [new Date().toISOString(), r.localId]);
     });
     return rows.filter((r) => r.serverAssetId);

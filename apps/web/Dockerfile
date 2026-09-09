@@ -11,6 +11,9 @@ COPY apps/web/package.json apps/web/
 RUN pnpm install --frozen-lockfile --filter @minnegela/web... --ignore-scripts
 
 FROM deps AS build
+# Inlined into the browser bundle; server components read API_URL at runtime instead.
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 COPY packages/shared packages/shared
 COPY apps/web apps/web
 COPY tsconfig.base.json ./

@@ -79,7 +79,11 @@ services:
   caddy:
     image: docker.io/library/caddy:2
     restart: unless-stopped
-    ports: ["80:80", "443:443"]
+    # Defaults serve a dedicated public box; a shared box narrows the bind
+    # address and moves the ports in .env (see infra/compose.server.yml).
+    ports:
+      - "${CADDY_BIND:-0.0.0.0}:${CADDY_HTTP_PORT:-80}:80"
+      - "${CADDY_BIND:-0.0.0.0}:${CADDY_HTTPS_PORT:-443}:443"
     volumes:
       - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data

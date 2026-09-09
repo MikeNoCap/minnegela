@@ -18,6 +18,31 @@ export function sha256Hex(buf: Buffer): string {
   return createHash('sha256').update(buf).digest('hex');
 }
 
+/** Postgres unique violation on blobs(group_id, sha256): another blob with the same bytes finished deriving first. */
+export function isGroupShaConflict(e: unknown): boolean {
+  const cause = (e as { cause?: unknown })?.cause ?? e;
+  const code = (cause as { code?: string })?.code;
+  const text = `${(e as Error)?.message ?? ''} ${(cause as Error)?.message ?? ''}`;
+  return code === '23505' && text.includes('blobs_group_sha');
+}
+
+/**
+ * §14 exact duplicate: repoint this blob's assets at the blob that already holds these bytes, drop
+ * this blob and its staged upload. Returns false when no derived twin exists (caller keeps going).
+ */
+export async function mergeExactDuplicate(ctx: Ctx, blob: Pick<typeof blobs.$inferSelect, 'id' | 'groupId'>, sha: string, stagingKey: string, why: string): Promise<boolean> {
+  const { db, storage, log } = ctx;
+  const [existing] = await db.select({ id: blobs.id }).from(blobs).where(and(eq(blobs.groupId, blob.groupId), eq(blobs.sha256, Buffer.from(sha, 'hex')), ne(blobs.id, blob.id), isNotNull(blobs.derivedAt)));
+  if (!existing) return false;
+  await db.transaction(async (tx) => {
+    await tx.update(assets).set({ blobId: existing.id }).where(eq(assets.blobId, blob.id));
+    await tx.delete(blobs).where(eq(blobs.id, blob.id));
+  });
+  await storage.delete([stagingKey]);
+  log.info({ blobId: blob.id, existing: existing.id, why }, 'derive: exact duplicate merged');
+  return true;
+}
+
 /**
  * §8.2 / §11 time rules. Returns the RAW capture instant (no device clock correction: the ML worker's
  * `recluster` applies devices.clock_offset_s at read time), its zone and whether the time is trustworthy.
@@ -64,16 +89,7 @@ export async function derive(ctx: Ctx, payload: DerivePayload): Promise<void> {
       throw new Error(`sha256 mismatch for blob ${blob.id}: recorded ${Buffer.from(blob.sha256).toString('hex')}, uploaded ${sha}`);
     }
     // exact duplicate already in the group (§14): repoint assets, drop this blob and the upload
-    const [existing] = await db.select({ id: blobs.id }).from(blobs).where(and(eq(blobs.groupId, blob.groupId), eq(blobs.sha256, Buffer.from(sha, 'hex')), ne(blobs.id, blob.id), isNotNull(blobs.derivedAt)));
-    if (existing) {
-      await db.transaction(async (tx) => {
-        await tx.update(assets).set({ blobId: existing.id }).where(eq(assets.blobId, blob.id));
-        await tx.delete(blobs).where(eq(blobs.id, blob.id));
-      });
-      await storage.delete([payload.stagingKey]);
-      log.info({ blobId: blob.id, existing: existing.id }, 'derive: exact duplicate merged');
-      return;
-    }
+    if (await mergeExactDuplicate(ctx, blob, sha, payload.stagingKey, 'pre-check')) return;
   }
 
   const blobSha = firstDerive ? sha : Buffer.from(blob.sha256!).toString('hex');
@@ -141,16 +157,24 @@ export async function derive(ctx: Ctx, payload: DerivePayload): Promise<void> {
   }
   if (firstDerive) { update.sha256 = Buffer.from(sha, 'hex'); update.derivedAt = new Date(); }
 
-  await db.transaction(async (tx) => {
-    await tx.update(blobs).set(update).where(eq(blobs.id, blob.id));
-    for (const d of derivRows) {
-      await tx.insert(derivatives).values(d).onConflictDoUpdate({ target: [derivatives.blobId, derivatives.kind, derivatives.frameIndex], set: { storageKey: d.storageKey, width: d.width, height: d.height, bytes: d.bytes } });
-    }
-    if (payload.kind === 'original') await tx.update(assets).set({ originalUploadedAt: sql`coalesce(original_uploaded_at, now())` }).where(eq(assets.blobId, blob.id));
-    if (firstDerive) {
-      await enqueue(tx, 'analyze', { blobId: blob.id, groupId: g }, { priority: isVideo ? -5 : 0 });
-      await enqueue(tx, 'dedupe', { blobId: blob.id, groupId: g });
-    }
-  });
+  try {
+    await db.transaction(async (tx) => {
+      await tx.update(blobs).set(update).where(eq(blobs.id, blob.id));
+      for (const d of derivRows) {
+        await tx.insert(derivatives).values(d).onConflictDoUpdate({ target: [derivatives.blobId, derivatives.kind, derivatives.frameIndex], set: { storageKey: d.storageKey, width: d.width, height: d.height, bytes: d.bytes } });
+      }
+      if (payload.kind === 'original') await tx.update(assets).set({ originalUploadedAt: sql`coalesce(original_uploaded_at, now())` }).where(eq(assets.blobId, blob.id));
+      if (firstDerive) {
+        await enqueue(tx, 'analyze', { blobId: blob.id, groupId: g }, { priority: isVideo ? -5 : 0 });
+        await enqueue(tx, 'dedupe', { blobId: blob.id, groupId: g });
+      }
+    });
+  } catch (e) {
+    // Two uploads of the same bytes derived concurrently (an enrollment pick and its library copy,
+    // say): the twin won the unique index, so merge into it. Derivatives are keyed by sha, so ours
+    // are the same objects the twin uses.
+    if (firstDerive && isGroupShaConflict(e) && (await mergeExactDuplicate(ctx, blob, sha, payload.stagingKey, 'raced'))) return;
+    throw e;
+  }
   log.info({ blobId: blob.id, kind: payload.kind, firstDerive, utility: update.isUtility, capturedAt: update.capturedAt }, 'derive: done');
 }

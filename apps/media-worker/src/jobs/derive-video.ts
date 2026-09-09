@@ -8,7 +8,7 @@ import type { Ctx } from '../context.js';
 import { ffprobe, extractFrame, transcode720 } from '../ffmpeg.js';
 import { phash } from '../phash.js';
 import { quality } from '../quality.js';
-import { sha256Hex, extFor, type DerivePayload } from './derive.js';
+import { sha256Hex, extFor, isGroupShaConflict, mergeExactDuplicate, type DerivePayload } from './derive.js';
 
 /** §13.2 video stage: poster + ≤ 8 frames, preview from the poster, 720p transcode. Lowest priority by design. */
 export async function deriveVideo(ctx: Ctx, payload: DerivePayload, blob: typeof blobs.$inferSelect): Promise<void> {
@@ -72,6 +72,7 @@ export async function deriveVideo(ctx: Ctx, payload: DerivePayload, blob: typeof
     };
     if (firstDerive) { update.sha256 = Buffer.from(sha, 'hex'); update.derivedAt = new Date(); update.phash = await phash(prev.data); update.quality = await quality(prev.data); }
 
+    try {
     await db.transaction(async (tx) => {
       await tx.update(blobs).set(update).where(eq(blobs.id, blob.id));
       for (const d of derivRows) await tx.insert(derivatives).values(d).onConflictDoUpdate({ target: [derivatives.blobId, derivatives.kind, derivatives.frameIndex], set: { storageKey: d.storageKey, width: d.width, height: d.height, bytes: d.bytes } });
@@ -80,6 +81,10 @@ export async function deriveVideo(ctx: Ctx, payload: DerivePayload, blob: typeof
       await enqueue(tx, 'analyze', { blobId: blob.id, groupId: g }, { priority: -5 });
       if (firstDerive) await enqueue(tx, 'dedupe', { blobId: blob.id, groupId: g });
     });
+    } catch (e) {
+      if (firstDerive && isGroupShaConflict(e) && (await mergeExactDuplicate(ctx, blob, sha, payload.stagingKey, 'raced'))) return;
+      throw e;
+    }
     log.info({ blobId: blob.id, durationMs: probe.durationMs, frames: n }, 'derive-video: done');
   } finally {
     await rm(tmp, { recursive: true, force: true });

@@ -1,0 +1,51 @@
+# Server overlay for Phases 0-1: the production stack plus MinIO on this box.
+# R2 replaces MinIO in Phase 2 (drop this file's minio services, flip S3_* in .env).
+# Usage (from repo root):
+#   podman compose -f infra/compose.yml -f infra/compose.server.yml up -d --build
+services:
+  postgres:
+    # Migrator, seeder and CLI run on the host; localhost only. 5433 because
+    # the box's system postgres (russesjefen.no) owns 5432.
+    ports: ["127.0.0.1:5433:5432"]
+
+  minio:
+    image: quay.io/minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY_ID:-minnegela}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_ACCESS_KEY:?set in .env}
+    ports:
+      # S3 API on the Tailscale IP: presigned URLs must resolve for phones and
+      # browsers on the tailnet, and for the containers (S3_ENDPOINT in .env).
+      - "${TS_IP:-127.0.0.1}:9000:9000"
+      # Admin console, localhost only.
+      - "127.0.0.1:9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  minio-init:
+    image: quay.io/minio/mc:latest
+    depends_on:
+      minio: { condition: service_healthy }
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set local http://minio:9000 ${S3_ACCESS_KEY_ID:-minnegela} ${S3_SECRET_ACCESS_KEY:?set in .env} &&
+      mc mb --ignore-existing local/${S3_BUCKET:-minnegela-media} &&
+      echo bucket ready"
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Next.js inlines NEXT_PUBLIC_* into the browser bundle at build time.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
+
+volumes:
+  miniodata:

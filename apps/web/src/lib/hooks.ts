@@ -4,7 +4,7 @@ import { api, qs } from './api';
 import { useGroupId } from './group';
 import type { EventCard, EventDetail, MediaItem, Page, PersonSummary, MemberSummary, VisibilityInfo, GroupStatus, ReviewQueue, PersonDetail, MediaDetail, SearchResult, TimelineDay, GroupInfo, AuditRow, Invite, MapPin } from './types';
 
-export function useEvents(filters: { from?: string; to?: string; people?: number[]; place?: string } = {}) {
+export function useEvents(filters: { from?: string; to?: string; people?: number[]; place?: string; quiet?: 'hide' | 'only' | 'all' } = {}) {
   const g = useGroupId();
   return useInfiniteQuery({
     queryKey: ['events', g, filters],
@@ -73,6 +73,7 @@ export function useAction<TVars = void, TOut = unknown>(fn: (vars: TVars) => Pro
 
 export const eventActions = {
   rename: (id: string, title: string) => api<EventDetail>(`/v1/events/${id}`, { method: 'PATCH', body: { title } }),
+  interest: (id: string, interest: 'keep' | 'quiet' | 'auto') => api<EventDetail>(`/v1/events/${id}`, { method: 'PATCH', body: { interest } }),
   open: (id: string) => api(`/v1/events/${id}/open`, { method: 'POST', body: {} }),
   close: (id: string) => api(`/v1/events/${id}/close`, { method: 'POST', body: {} }),
   tag: (id: string, personId: number) => api(`/v1/events/${id}/tags`, { method: 'POST', body: { personId } }),

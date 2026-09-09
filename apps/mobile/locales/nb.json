@@ -1,0 +1,11 @@
+{
+  "ios": {
+    "CFBundleDisplayName": "Minnegela",
+    "NSPhotoLibraryUsageDescription": "Minnegela indekserer bildebiblioteket ditt slik at vennegjengen kan finne felles minner. Venner ser bare hendelser dere var på sammen; alt annet forblir privat for deg.",
+    "NSPhotoLibraryAddUsageDescription": "Minnegela lagrer ikke bilder i biblioteket ditt.",
+    "NSCameraUsageDescription": "Minnegela bruker ikke kameraet."
+  },
+  "android": {
+    "app_name": "Minnegela"
+  }
+}

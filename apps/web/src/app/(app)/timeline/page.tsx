@@ -1,16 +1,19 @@
 'use client';
 import { Suspense, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useTranslations } from 'next-intl';
 import { useTimeline } from '@/lib/hooks';
 import { EventCard } from '@/components/EventCard';
 import { MediaGrid } from '@/components/MediaGrid';
 import { MediaViewer } from '@/components/MediaViewer';
-import { fmtDate } from '@/lib/format';
+import { useFormat } from '@/lib/format';
 import type { TimelineDay } from '@/lib/types';
 
 export default function TimelinePage() { return <Suspense><Timeline /></Suspense>; }
 
 function Timeline() {
+  const t = useTranslations('timeline');
+  const { fmtDate } = useFormat();
   const params = useSearchParams();
   const router = useRouter();
   const day = params.get('day') ?? new Date().toISOString().slice(0, 10);
@@ -21,9 +24,9 @@ function Timeline() {
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2">
-        <button className="btn" onClick={() => shift(-1)}>‹</button>
-        <input type="date" className="input w-auto" value={day} onChange={(e) => router.push(`/timeline?day=${e.target.value}`)} />
-        <button className="btn" onClick={() => shift(1)}>›</button>
+        <button className="btn" onClick={() => shift(-1)} aria-label={t('previousDay')}>‹</button>
+        <input type="date" className="input w-auto" value={day} onChange={(e) => router.push(`/timeline?day=${e.target.value}`)} aria-label={t('day')} />
+        <button className="btn" onClick={() => shift(1)} aria-label={t('nextDay')}>›</button>
         <span className="text-ink-2">{fmtDate(day, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}</span>
       </div>
       {q.isLoading && <p className="text-ink-3 text-sm">…</p>}
@@ -33,11 +36,11 @@ function Timeline() {
           {d.events.length > 0 && <div className="grid gap-3 grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">{d.events.map((e) => <EventCard key={e.id} ev={e} />)}</div>}
           {d.loose.length > 0 && (
             <div>
-              <h3 className="text-ink-3 text-[12px] mb-1">{d.loose.length} loose photo{d.loose.length === 1 ? '' : 's'}</h3>
+              <h3 className="text-ink-3 text-[12px] mb-1">{t('loosePhotos', { count: d.loose.length })}</h3>
               <MediaGrid items={d.loose} onOpen={(m) => setViewer({ items: d.loose, i: d.loose.indexOf(m) })} />
             </div>
           )}
-          {d.events.length === 0 && d.loose.length === 0 && <p className="text-ink-3 text-sm">Nothing on this day.</p>}
+          {d.events.length === 0 && d.loose.length === 0 && <p className="text-ink-3 text-sm">{t('nothing')}</p>}
         </section>
       ))}
       {viewer && <MediaViewer items={viewer.items} index={viewer.i} onClose={() => setViewer(null)} onIndex={(i) => setViewer({ ...viewer, i })} />}

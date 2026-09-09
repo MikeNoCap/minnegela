@@ -10,7 +10,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageOps
 
-from .models.clip import clip, is_utility
+from .calibrate import STATS_MIN_N, robust_stats
+from .models.clip import clip
 from .models.faces import faces
 
 log = logging.getLogger(__name__)
@@ -21,6 +22,7 @@ def analyze_folder(folder: str, out: str, limit: int = 500) -> None:
     paths = sorted(p for p in Path(folder).rglob("*") if p.suffix.lower() in EXTS)[:limit]
     c, f = clip(), faces()
     rows = []
+    pending: list[tuple] = []
     for p in paths:
         try:
             im = ImageOps.exif_transpose(Image.open(p)).convert("RGB")
@@ -29,14 +31,18 @@ def analyze_folder(folder: str, out: str, limit: int = 500) -> None:
             log.warning("skip %s: %s", p, e)
             continue
         emb = c.embed_images([im])[0]
-        tags = c.zero_shot_tags(emb)
         dets = f.detect(im)
         thumb = im.copy()
         thumb.thumbnail((320, 320))
         buf = io.BytesIO()
         thumb.save(buf, "JPEG", quality=70)
-        rows.append((p.name, base64.b64encode(buf.getvalue()).decode(), tags, dets, is_utility(tags)))
-        log.info("%s: %d faces, %s", p.name, len(dets), tags[0]["tag"])
+        pending.append((p.name, base64.b64encode(buf.getvalue()).decode(), emb, dets))
+    # calibrate against the folder itself when it is big enough (mirrors the per-group statistics)
+    stats = robust_stats(c.raw_scores(np.stack([e for _, _, e, _ in pending]))) if len(pending) >= STATS_MIN_N else None
+    for name, b64, emb, dets in pending:
+        tr = c.tag(emb, stats)
+        rows.append((name, b64, tr.tags, dets, tr.utility))
+        log.info("%s: %d faces, %s", name, len(dets), tr.tags[0]["tag"] if tr.tags else "-")
     parts = ["<!doctype html><meta charset=utf-8><title>analyze-folder</title><style>body{font:13px sans-serif;display:grid;grid-template-columns:repeat(auto-fill,340px);gap:10px}figure{margin:0}img{max-width:320px}.u{opacity:.5}</style>"]
     for name, b64, tags, dets, util in rows:
         flags = "; ".join(f"{d.det_score:.2f} {','.join(d.quality_flags) or 'ok'}" for d in dets)

@@ -6,7 +6,7 @@ import logging
 import os
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from typing import Iterable
 
@@ -27,7 +27,12 @@ class Storage:
             region_name=settings.s3_region,
             aws_access_key_id=settings.s3_access_key_id,
             aws_secret_access_key=settings.s3_secret_access_key,
-            config=Config(s3={"addressing_style": "path" if settings.s3_force_path_style else "virtual"}, retries={"max_attempts": 4}),
+            # pool sized for the 16-thread prefetch; timeouts so a dead R2 connection fails fast and retries
+            config=Config(
+                s3={"addressing_style": "path" if settings.s3_force_path_style else "virtual"},
+                retries={"max_attempts": 4, "mode": "standard"},
+                max_pool_connections=32, connect_timeout=10, read_timeout=60,
+            ),
         )
         self.cache_dir = Path(cache_dir or settings.worker_cache_dir) / "ml"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
@@ -85,6 +90,10 @@ class Storage:
     # -- writes ---------------------------------------------------------------------
     def put_bytes(self, key: str, data: bytes, content_type: str) -> None:
         self.client.put_object(Bucket=self.bucket, Key=key, Body=data, ContentType=content_type)
+
+    def put_bytes_async(self, key: str, data: bytes, content_type: str) -> Future[None]:
+        """Upload on the pool; call `.result()` before committing anything that references `key`."""
+        return self._pool.submit(self.put_bytes, key, data, content_type)
 
     def exists(self, key: str) -> bool:
         try:

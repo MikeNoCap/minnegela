@@ -1,5 +1,6 @@
 import { sql, type Tx, type ViewerCtx } from '@minnegela/db';
 import { alias } from 'drizzle-orm/pg-core';
+import { DEFAULT_LOCALE, localized, type ConfidenceKey, type Locale, type Localized } from '@minnegela/shared';
 import { visibleEventsWhere, events, assets, WBS, type EventCard, type MediaItem } from './deps.js';
 
 /** Aliases matching the `events e` / `assets a` used in the raw queries; pass these to the predicate builders. */
@@ -8,35 +9,39 @@ export const A = alias(assets, 'a') as unknown as typeof assets;
 
 /** Row shape produced by the events query below. */
 export type EventRow = {
-  id: string; kind: 'event' | 'trip' | 'loose'; title_auto: string | null; title_manual: string | null;
+  id: string; kind: 'event' | 'trip' | 'loose'; title_auto: Localized | null; title_manual: string | null;
   start_at: Date; end_at: Date; tz: string | null; center_lat: number | null; center_lon: number | null;
   place_id: string | null; place_name: string | null; contributor_ids: string[]; person_ids: number[];
   n_assets: number; n_videos: number; confidence: number; cover_blob_id: string | null;
   is_public_to_group: boolean; frozen: boolean; suggested_splits: Date[] | null; opened_by_user_id: string | null; opened_at: Date | null;
+  interest: number | null; interest_manual: -1 | 1 | null;
 };
 
 export const EVENT_COLUMNS = sql`e.id, e.kind, e.title_auto, e.title_manual, e.start_at, e.end_at, e.tz, e.center_lat, e.center_lon,
   e.place_id, p.name as place_name, e.contributor_ids, e.person_ids, e.n_assets, e.n_videos, e.confidence, e.cover_blob_id,
-  e.is_public_to_group, e.frozen, e.suggested_splits::text[] as suggested_splits, e.opened_by_user_id, e.opened_at`;
+  e.is_public_to_group, e.frozen, e.suggested_splits::text[] as suggested_splits, e.opened_by_user_id, e.opened_at, e.interest, e.interest_manual`;
 
-export function eventTitle(r: { title_manual: string | null; title_auto: string | null; start_at: Date }): string {
-  return r.title_manual ?? r.title_auto ?? r.start_at.toISOString().slice(0, 10);
+export function eventTitle(r: { title_manual: string | null; title_auto: Localized | null; start_at: Date }, locale: Locale): string {
+  return r.title_manual ?? localized(r.title_auto, locale) ?? r.start_at.toISOString().slice(0, 10);
 }
 
-export function toEventCard(r: EventRow): EventCard {
+/** The same title as `eventTitle`, for raw queries over `events e`. */
+export const titleSql = (locale: Locale) => sql`coalesce(e.title_manual, e.title_auto->>${locale}, e.title_auto->>${DEFAULT_LOCALE}, e.title_auto->>'en')`;
+
+export function toEventCard(r: EventRow, locale: Locale): EventCard {
   return {
-    id: r.id, kind: r.kind, title: eventTitle(r), titleManual: r.title_manual,
+    id: r.id, kind: r.kind, title: eventTitle(r, locale), titleManual: r.title_manual,
     startAt: r.start_at.toISOString(), endAt: r.end_at.toISOString(), tz: r.tz,
     center: r.center_lat !== null && r.center_lon !== null ? { lat: r.center_lat, lon: r.center_lon } : null,
     placeId: r.place_id, placeName: r.place_name, contributorIds: r.contributor_ids, personIds: r.person_ids,
     nAssets: r.n_assets, nVideos: r.n_videos, confidence: r.confidence, coverBlobId: r.cover_blob_id,
-    isPublicToGroup: r.is_public_to_group, frozen: r.frozen,
+    isPublicToGroup: r.is_public_to_group, frozen: r.frozen, interest: r.interest, interestManual: r.interest_manual,
   };
 }
 
-export function confidenceCopy(confidence: number, suggestedSplits: number): string {
-  if (suggestedSplits > 0) return 'This might be two events';
-  return confidence >= WBS.eventConfidentCopy ? "We're fairly sure this was one event" : 'This might be more than one event';
+export function confidenceKey(confidence: number, suggestedSplits: number): ConfidenceKey {
+  if (suggestedSplits > 0) return 'maybe_two_events';
+  return confidence >= WBS.eventConfidentCopy ? 'sure_one_event' : 'maybe_more_events';
 }
 
 /** Events visible to the viewer, with the place name joined. Callers append their own filters and ordering. */

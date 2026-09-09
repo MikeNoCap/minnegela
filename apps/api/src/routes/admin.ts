@@ -23,7 +23,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
 
   r.post('/v1/groups/:g/jobs/retry', { schema: { params: G, body: z.object({ jobIds: z.array(z.number().int()).max(500).optional() }).optional() } }, async (req) => {
     const v = await req.ctxFor(req.params.g);
-    if (v.role !== 'owner') throw forbidden('Owner only');
+    if (v.role !== 'owner') throw forbidden('owner_only', 'Owner only');
     return withViewer(ctx.db, v, async (tx) => {
       const ids = req.body?.jobIds;
       const retried = await rows<{ id: number }>(tx, sql`update jobs set done_at = null, error = null, locked_by = null, locked_at = null, attempts = 0, run_after = now()
@@ -35,7 +35,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
 
   r.post('/v1/groups/:g/recluster', { schema: { params: G } }, async (req, reply) => {
     const v = await req.ctxFor(req.params.g);
-    if (v.role !== 'owner') throw forbidden('Owner only');
+    if (v.role !== 'owner') throw forbidden('owner_only', 'Owner only');
     await withViewer(ctx.db, v, async (tx) => {
       await enqueue(tx, 'recluster', { groupId: v.groupId, full: true }, { runAfterSeconds: 0, priority: 5 });
       await audit(tx, v, 'recluster.full', null, null, req);
@@ -45,7 +45,7 @@ export async function adminRoutes(app: FastifyInstance, ctx: AppContext) {
 
   r.get('/v1/groups/:g/audit', { schema: { params: G, querystring: z.object({ limit: z.coerce.number().int().min(1).max(500).default(100), before: z.coerce.number().int().optional() }) } }, async (req) => {
     const v = await req.ctxFor(req.params.g);
-    if (v.role !== 'owner') throw forbidden('Owner only');
+    if (v.role !== 'owner') throw forbidden('owner_only', 'Owner only');
     return withViewer(ctx.db, v, async (tx) => ({
       items: await rows(tx, sql`select a.id, a.user_id as "userId", u.display_name as "userName", a.action, a.target_type as "targetType", a.target_id as "targetId", a.meta, a.ip, a.at
         from audit_log a left join users u on u.id = a.user_id where a.group_id = ${v.groupId}::uuid ${req.query.before ? sql`and a.id < ${req.query.before}` : sql``} order by a.id desc limit ${req.query.limit}`),

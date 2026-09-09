@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { AppContext } from '../app.js';
 import { withViewer, sql, visibleBlobIds, visibleAssetsWhere, assets, DEDUPE, MediaUrlsRequest, SignedUrlKind, type ViewerCtx, type Tx } from '../deps.js';
 import { audit } from '../audit.js';
-import { rows, iso, MEDIA_COLUMNS, toMediaItem, type MediaRow, A, mediaRows, uuidArr, ts } from '../dto.js';
+import { rows, iso, MEDIA_COLUMNS, toMediaItem, titleSql, type MediaRow, A, mediaRows, uuidArr, ts } from '../dto.js';
 
 const G = z.object({ g: z.string().uuid() });
 const BLOB = z.object({ blobId: z.string().uuid() });
@@ -36,7 +36,7 @@ export async function mediaRoutes(app: FastifyInstance, ctx: AppContext) {
     return withViewer(ctx.db, v, async (tx) => {
       const owners = await rows<{ user_id: string; display_name: string; asset_id: string }>(tx, sql`select a.owner_user_id as user_id, u.display_name, a.id as asset_id from assets a join users u on u.id = a.owner_user_id where a.blob_id = ${m.blob_id}::uuid and a.deleted_at is null`);
       const faces = await rows<{ id: number | null; name: string | null; user_id: string | null; cover_face_id: string | null; hidden: boolean | null; tier: string | null; face_id: string; box: unknown }>(tx, sql`select p.id, p.name, p.user_id, p.cover_face_id, p.hidden, f.tier, f.id as face_id, f.box from faces f left join persons p on p.id = f.person_id where f.blob_id = ${m.blob_id}::uuid order by f.det_score desc`);
-      const evs = await rows<{ event_id: string; tier: string; confidence: number; title: string | null; start_at: Date; place_name: string | null }>(tx, sql`select ea.event_id, ea.tier, ea.confidence, coalesce(e.title_manual, e.title_auto) as title, e.start_at, pl.name as place_name from event_assets ea join events e on e.id = ea.event_id left join places pl on pl.id = e.place_id where ea.blob_id = ${m.blob_id}::uuid and e.deleted_at is null order by ea.confidence desc`);
+      const evs = await rows<{ event_id: string; tier: string; confidence: number; title: string | null; start_at: Date; place_name: string | null }>(tx, sql`select ea.event_id, ea.tier, ea.confidence, ${titleSql(req.locale)} as title, e.start_at, pl.name as place_name from event_assets ea join events e on e.id = ea.event_id left join places pl on pl.id = e.place_id where ea.blob_id = ${m.blob_id}::uuid and e.deleted_at is null order by ea.confidence desc`);
       const mediaByBlob = async (ids: string[]) => ids.length ? mediaRows(tx, sql`select distinct on (b.id) ${MEDIA_COLUMNS} from assets a join blobs b on b.id = a.blob_id where b.id = any(${uuidArr(ids)}) and ${visibleAssetsWhere(v, A)} order by b.id, (a.owner_user_id = ${v.userId}::uuid) desc`) : [];
       const similarIds = m.has_emb ? (await rows<{ id: string }>(tx, sql`select b.id from blobs b where b.id <> ${m.blob_id}::uuid and b.clip_emb is not null and b.id in ${visibleBlobIds(v)} order by b.clip_emb <=> (select clip_emb from blobs where id = ${m.blob_id}::uuid) limit 12`)).map((s) => s.id) : [];
       const angleIds = m.captured_at ? (await rows<{ id: string }>(tx, sql`

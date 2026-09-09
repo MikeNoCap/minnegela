@@ -55,7 +55,7 @@ export async function seedFixture(db: Db, opts: { groupName?: string } = {}): Pr
     return ids;
   }
   async function addEvent(name: string, members: { assetId: string; blobId: string }[], startMs: number, extra: Partial<typeof s.events.$inferInsert> = {}) {
-    const [ev] = await db.insert(s.events).values({ groupId, titleAuto: name, startAt: new Date(startMs), endAt: new Date(startMs + members.length * 5 * 60_000), confidence: 0.9, ...extra }).returning();
+    const [ev] = await db.insert(s.events).values({ groupId, titleAuto: { nb: name, en: name }, startAt: new Date(startMs), endAt: new Date(startMs + members.length * 5 * 60_000), confidence: 0.9, ...extra }).returning();
     await db.insert(s.eventAssets).values(members.map((m) => ({ eventId: ev!.id, assetId: m.assetId, blobId: m.blobId, confidence: 0.9, tier: 'confirmed' as const, source: 'auto' as const })));
     return ev!.id;
   }

@@ -4,8 +4,11 @@ import { magicLink } from 'better-auth/plugins/magic-link';
 import { bearer } from 'better-auth/plugins/bearer';
 import { emailOTP } from 'better-auth/plugins/email-otp';
 import { users, sessions, accounts, verifications, type Db } from '@minnegela/db';
+import { pickLocale } from '@minnegela/shared';
 import type { Config } from './config.js';
 import type { Logger } from 'pino';
+import { createMailer } from './mail.js';
+import { MAIL } from './i18n.js';
 
 /** The most recent magic link per email; used by tests and by the console mail transport. */
 export const lastMagicLinks = new Map<string, { url: string; token: string; at: number }>();
@@ -13,6 +16,7 @@ export const lastMagicLinks = new Map<string, { url: string; token: string; at: 
 export const lastOtps = new Map<string, { otp: string; at: number }>();
 
 export function createAuth(cfg: Config, db: Db, log: Logger) {
+  const mailer = createMailer(cfg, log);
   return betterAuth({
     appName: 'Minnegela',
     baseURL: cfg.API_URL,
@@ -31,18 +35,18 @@ export function createAuth(cfg: Config, db: Db, log: Logger) {
         otpLength: 6,
         expiresIn: 60 * 10,
         allowedAttempts: 5,
-        sendVerificationOTP: async ({ email, otp, type }) => {
+        sendVerificationOTP: async ({ email, otp }, request) => {
           lastOtps.set(email.toLowerCase(), { otp, at: Date.now() });
-          if (cfg.MAIL_TRANSPORT === 'console') log.info({ email, otp, type }, 'sign-in code (console transport)');
-          else log.warn({ email, type }, 'MAIL_TRANSPORT=smtp is not wired yet; code logged only');
+          const m = MAIL[pickLocale(request?.headers?.get('accept-language'))];
+          await mailer.send({ to: email, subject: m.otpSubject(otp), text: m.otpText(otp) });
         },
       }),
       magicLink({
         expiresIn: 60 * 15,
-        sendMagicLink: async ({ email, url, token }) => {
+        sendMagicLink: async ({ email, url, token }, request) => {
           lastMagicLinks.set(email.toLowerCase(), { url, token, at: Date.now() });
-          if (cfg.MAIL_TRANSPORT === 'console') log.info({ email, url }, 'magic link (console transport)');
-          else log.warn({ email }, 'MAIL_TRANSPORT=smtp is not wired yet; link logged only');
+          const m = MAIL[pickLocale(request?.headers?.get('accept-language'))];
+          await mailer.send({ to: email, subject: m.linkSubject, text: m.linkText(url) });
         },
       }),
     ],

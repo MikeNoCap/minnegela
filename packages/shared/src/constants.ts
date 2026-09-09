@@ -65,17 +65,40 @@ export const DEDUPE = {
   neighbourWindowHours: 24,   // re-encoded copies (WhatsApp saves) land up to a day later; bursts still need ≤10 s
 } as const;
 
-export const ZERO_SHOT_PROMPTS = [
-  'a photo of food', 'a photo of a drink', 'a screenshot', 'a document', 'a receipt', 'a meme',
-  'a selfie', 'a group of people', 'a portrait of one person', 'a concert', 'a party', 'a beach',
-  'a city street at night', 'a city street in daytime', 'a car', 'a pet', 'a dog', 'a cat',
-  'a mountain landscape', 'a forest', 'a lake', 'snow', 'a hike', 'a boat', 'an airplane window',
-  'a hotel room', 'a living room', 'a kitchen', 'a restaurant', 'a bar', 'a cabin', 'a birthday cake',
-  'a wedding', 'a sports event', 'a sunset', 'fireworks', 'a text message conversation', 'a map',
-  'a blurry accidental photo', 'a beautiful photo',
-] as const;
-export const UTILITY_TAGS = new Set(['a screenshot', 'a document', 'a receipt', 'a meme', 'a text message conversation', 'a map']);
-export const UTILITY_TAG_THRESHOLD = 0.28;
+/** §6.3 calibrated zero-shot tags. The vocabulary lives in apps/ml-worker/minnegela_ml/vocab.py; each stored tag
+ * carries its category, so nothing here needs the prompt list. `score` is a squashed per-group z-score. */
+export const TAGS = {
+  present: 0.6,          // a tag at/above this counts as "in the picture"
+  top: 8,                // tags stored per blob (plus anything present)
+  utility: 0.6,          // screenshot/document/receipt/meme threshold (plus the raw camera-photo anchor, ML side)
+  vocabVersion: 3,
+  /** Categories that describe *what happened*, in the order titles prefer them. */
+  titleCategories: ['activity', 'scene', 'food', 'drink', 'animal', 'object'] as const,
+  /** Coverage an event needs (fraction of assets with the tag present) before a tag names or scores it. */
+  eventCoverage: 0.4,
+} as const;
+export type TagCategory = 'activity' | 'scene' | 'food' | 'drink' | 'object' | 'animal' | 'people' | 'mundane' | 'utility';
+export type StoredTag = { tag: string; cat?: TagCategory; score: number; z?: number };
+
+/** §9.11 feed interest: how likely an event is worth a card in the river. Weights sum to ~1 before penalties. */
+export const INTEREST = {
+  base: 0.10,
+  others: 0.30,        // named people who are not the photographers, capped at 3
+  faces: 0.15,         // average faces per asset, capped at 2
+  contributors: 0.10,  // more than one contributor
+  specific: 0.15,      // strongest activity/scene/food/... tag coverage
+  size: 0.10,          // assets, capped at 24
+  duration: 0.05,      // hours, capped at 4
+  namedPlace: 0.05,    // the place has a user-given name
+  routinePenalty: 0.35,
+  mundanePenalty: 0.15,
+  videoOnlyPenalty: 0.10,
+  quiet: 0.30,         // below this the feed folds the event into "quiet events"
+  manualHigh: 0.9,
+  manualLow: 0.1,
+  /** places.routine: many events, few other people, no second contributor; nudged by promote/demote feedback. */
+  routine: { minEvents: 2, fullAtEvents: 10, feedback: 0.5 },
+} as const;
 
 export const STORAGE_KEYS = {
   staging: (groupId: string, assetId: string, kind: 'preview' | 'original', ext: string) => `groups/${groupId}/staging/${kind}/${assetId}.${ext}`,

@@ -1,18 +1,20 @@
 /** Minimal fetch wrapper: bearer auth, RFC 7807 problem+json → ApiError. */
 export class ApiError extends Error {
-  constructor(public status: number, message: string, public detail?: string) {
+  constructor(public status: number, message: string, public detail?: string, public code?: string) {
     super(message);
     this.name = 'ApiError';
   }
 }
 
-export type ClientConfig = { baseUrl: () => string; token: () => string | null; onUnauthorized?: () => void };
+export type ClientConfig = { baseUrl: () => string; token: () => string | null; locale?: () => string; onUnauthorized?: () => void };
 
 export type ResponseWithHeaders<T> = { body: T; headers: Headers };
 
 export function createClient(cfg: ClientConfig) {
   async function raw<T>(method: string, path: string, body?: unknown, extraHeaders: Record<string, string> = {}): Promise<ResponseWithHeaders<T>> {
     const headers: Record<string, string> = { Accept: 'application/json', ...extraHeaders };
+    const locale = cfg.locale?.();
+    if (locale) headers['Accept-Language'] = locale;
     const token = cfg.token();
     if (token) headers.Authorization = `Bearer ${token}`;
     if (body !== undefined) headers['Content-Type'] = 'application/json';
@@ -22,8 +24,8 @@ export function createClient(cfg: ClientConfig) {
     try { json = text ? JSON.parse(text) : null; } catch { json = null; }
     if (!res.ok) {
       if (res.status === 401) cfg.onUnauthorized?.();
-      const p = (json ?? {}) as { title?: string; detail?: string; message?: string };
-      throw new ApiError(res.status, p.title ?? p.message ?? `HTTP ${res.status}`, p.detail);
+      const p = (json ?? {}) as { title?: string; detail?: string; message?: string; code?: string };
+      throw new ApiError(res.status, p.title ?? p.message ?? `HTTP ${res.status}`, p.detail, p.code);
     }
     return { body: json as T, headers: res.headers };
   }

@@ -2,10 +2,14 @@ import type { LocalAsset } from '@/db/types';
 import { applyRules } from './rules';
 import { decide } from './policy';
 import { toManifestItem, stateForAction } from './manifest';
-import type { SyncDeps, SyncProgress, SyncSummary } from './types';
+import { isEnrollImport } from './enrollPick';
+import type { PreparedUpload, SyncDeps, SyncProgress, SyncSummary } from './types';
 
 export const SYNC_KEYS = {
-  cursorCreatedAfter: 'enumerate.createdAfter',
+  /** ms epoch: every asset modified at or before this has been walked by a completed enumeration. */
+  enumerateHighWater: 'enumerate.highWater',
+  /** JSON {@link EnumerateResume}: a walk that ran out of budget and continues next pass. */
+  enumerateResume: 'enumerate.resume',
   lastReconcile: 'reconcile.lastAt',
   lastSyncAt: 'sync.lastAt',
   lastError: 'sync.lastError',
@@ -14,6 +18,40 @@ export const SYNC_KEYS = {
 
 const RECONCILE_EVERY_MS = 7 * 24 * 3600_000;
 const MAX_ATTEMPTS = 5;
+/** Uploads in flight at once. The per-asset cost is mostly waiting on R2 and the API, so a few
+ * overlap well; originals are large, so fewer of them. */
+export const UPLOAD_CONCURRENCY = { preview: 4, original: 2 } as const;
+/** Assets prepared and presigned per /sync/uploads call. The endpoint allows 120 calls a minute
+ * per client, so presigning one asset at a time cannot survive concurrent uploads. */
+export const PRESIGN_BATCH = 8;
+/** Transient answers (rate limit, server hiccup) do not burn one of the asset's 5 attempts. */
+const isTransient = (e: unknown) => { const st = (e as { status?: number })?.status; return st === 429 || (typeof st === 'number' && st >= 500); };
+
+/**
+ * Run `fn` over `items` with at most `n` in flight, in order. `gate` runs before each launch and
+ * returns true to stop launching; `fn` returns 'stop' to do the same. In-flight work always finishes.
+ */
+export async function runPool<T>(items: T[], n: number, fn: (item: T) => Promise<'ok' | 'stop'>, gate: () => boolean = () => false): Promise<void> {
+  let next = 0;
+  let stopped = false;
+  const worker = async () => {
+    while (!stopped && next < items.length) {
+      if (gate()) { stopped = true; return; }
+      const item = items[next++]!;
+      if ((await fn(item)) === 'stop') stopped = true;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(n, items.length)) }, worker));
+}
+
+type EnumerateResume = { after: string | null; newest: number; highWater: number };
+const modifiedMs = (a: { modifiedAt: string | null; createdAt: string }) => Date.parse(a.modifiedAt ?? a.createdAt);
+
+/** Forget the enumeration position so the next pass walks the whole library again (rules changed). */
+export async function resetEnumeration(db: Pick<SyncDeps['db'], 'setSyncState'>): Promise<void> {
+  await db.setSyncState(SYNC_KEYS.enumerateHighWater, null);
+  await db.setSyncState(SYNC_KEYS.enumerateResume, null);
+}
 
 /**
  * §16.3 One bounded, idempotent pass: enumerate → (reconcile weekly) → manifest → preview → original → enroll.
@@ -23,13 +61,16 @@ const MAX_ATTEMPTS = 5;
  */
 let running: Promise<SyncSummary> | null = null;
 
-export function runSync(deps: SyncDeps, opts: { budgetMs: number; maxItems: number; onProgress?: (p: SyncProgress) => void; force?: boolean }): Promise<SyncSummary> {
+export type SyncOpts = { budgetMs: number; maxItems: number; onProgress?: (p: SyncProgress) => void; force?: boolean; concurrency?: { preview: number; original: number } };
+
+export function runSync(deps: SyncDeps, opts: SyncOpts): Promise<SyncSummary> {
   if (running) return running;
   running = runSyncInner(deps, opts).finally(() => { running = null; });
   return running;
 }
 
-async function runSyncInner(deps: SyncDeps, opts: { budgetMs: number; maxItems: number; onProgress?: (p: SyncProgress) => void }): Promise<SyncSummary> {
+async function runSyncInner(deps: SyncDeps, opts: SyncOpts): Promise<SyncSummary> {
+  const concurrency = opts.concurrency ?? UPLOAD_CONCURRENCY;
   const now = deps.now ?? Date.now;
   const start = now();
   const log = deps.log ?? (() => {});
@@ -42,26 +83,42 @@ async function runSyncInner(deps: SyncDeps, opts: { budgetMs: number; maxItems: 
   const fail = (e: unknown) => { sum.failed++; sum.lastError = e instanceof Error ? e.message : String(e); log('sync error', { error: sum.lastError }); };
 
   try {
-    // 1. enumerate
+    // 1. enumerate: newest modification first, down to the high-water mark of the last completed
+    // walk. The query never changes mid-walk (Android pages by row offset), and the mark only moves
+    // once a walk finishes; an interrupted walk stores its position and resumes next pass.
     progress({ phase: 'enumerate', done: 0, total: 0 });
-    const cursorRaw = await deps.db.getSyncState(SYNC_KEYS.cursorCreatedAfter);
-    let createdAfter = cursorRaw ? Number(cursorRaw) : null;
-    let after: string | null = null;
-    while (!over() && sum.enumerated < opts.maxItems * 4) {
-      const page = await deps.library.page({ createdAfter, after, first: 200, includeVideos: settings.policy.includeVideos });
-      if (!page.assets.length) break;
-      await deps.db.upsertLocal(page.assets.map((a) => {
-        const r = applyRules(a, settings.rules);
-        return { ...a, state: r.excluded ? 'excluded' as const : 'new' as const };
-      }));
-      sum.enumerated += page.assets.length;
-      const newest = Math.max(...page.assets.map((a) => Date.parse(a.createdAt)));
-      if (Number.isFinite(newest)) createdAfter = Math.max(createdAfter ?? 0, newest);
-      progress({ phase: 'enumerate', done: sum.enumerated, total: 0 });
-      if (!page.hasNextPage) break;
+    const highWater = Number((await deps.db.getSyncState(SYNC_KEYS.enumerateHighWater)) ?? 0);
+    const resumeRaw = await deps.db.getSyncState(SYNC_KEYS.enumerateResume);
+    let resume: EnumerateResume | null = null;
+    try { resume = resumeRaw ? (JSON.parse(resumeRaw) as EnumerateResume) : null; } catch { resume = null; }
+    if (resume && resume.highWater !== highWater) resume = null;   // mark was reset since; start over
+    let after: string | null = resume?.after ?? null;
+    let newest = resume?.newest ?? 0;
+    let walkDone = false;
+    for (;;) {
+      if (over() || sum.enumerated >= opts.maxItems * 4) break;
+      const page = await deps.library.page({ after, first: 200, includeVideos: settings.policy.includeVideos });
+      const fresh = page.assets.filter((a) => modifiedMs(a) > highWater);
+      if (fresh.length) {
+        await deps.db.upsertLocal(fresh.map((a) => {
+          const r = applyRules(a, settings.rules);
+          return { ...a, state: r.excluded ? 'excluded' as const : 'new' as const };
+        }));
+        sum.enumerated += fresh.length;
+        newest = Math.max(newest, ...fresh.map(modifiedMs).filter(Number.isFinite));
+        progress({ phase: 'enumerate', done: sum.enumerated, total: 0 });
+      }
+      // Reached already-walked assets (descending order: everything after is older too) or the end.
+      if (fresh.length < page.assets.length || !page.hasNextPage || !page.assets.length) { walkDone = true; break; }
       after = page.endCursor;
     }
-    if (createdAfter !== null) await deps.db.setSyncState(SYNC_KEYS.cursorCreatedAfter, String(createdAfter));
+    if (walkDone) {
+      if (newest > highWater) await deps.db.setSyncState(SYNC_KEYS.enumerateHighWater, String(newest));
+      if (resume) await deps.db.setSyncState(SYNC_KEYS.enumerateResume, null);
+    } else {
+      sum.stoppedEarly = true;
+      await deps.db.setSyncState(SYNC_KEYS.enumerateResume, JSON.stringify({ after, newest, highWater } satisfies EnumerateResume));
+    }
 
     // 2. reconcile (weekly): deletions on the phone propagate as soft deletes (§18.7)
     const lastRec = Number((await deps.db.getSyncState(SYNC_KEYS.lastReconcile)) ?? 0);
@@ -69,6 +126,8 @@ async function runSyncInner(deps: SyncDeps, opts: { budgetMs: number; maxItems: 
       progress({ phase: 'reconcile', done: 0, total: 0 });
       try {
         const present = new Set(await deps.library.allIds());
+        // Enrollment imports live in app storage, not the library; they are never "gone from the phone".
+        for (const id of await deps.db.allLocalIds()) if (isEnrollImport(id)) present.add(id);
         const gone = await deps.db.markDeletedExcept(present);
         for (const g of gone) {
           if (over()) { sum.stoppedEarly = true; break; }
@@ -107,38 +166,31 @@ async function runSyncInner(deps: SyncDeps, opts: { budgetMs: number; maxItems: 
       }
     }
 
-    // 4. previews
+    // 4. previews: prepared and presigned in batches, uploaded a few at a time (the wait is R2 and
+    // the API, not the phone's CPU)
     const cond = await deps.conditions();
     const toPreview = await deps.db.listByState('manifested', opts.maxItems);
     const enrollFirst = [...toPreview].sort((x, y) => Number(pendingEnroll.includes(y.localId)) - Number(pendingEnroll.includes(x.localId)));
-    let i = 0;
-    for (const a of enrollFirst) {
-      if (over()) { sum.stoppedEarly = true; break; }
-      const d = decide(cond, settings.policy, { isVideo: a.isVideo, size: a.size });
-      if (!d.allowPreview) { log('preview deferred', { reason: d.reason }); break; }
-      progress({ phase: 'preview', done: i++, total: enrollFirst.length });
-      try {
-        await uploadOne(deps, a, 'preview', groupId, pendingUploads.get(a.localId));
-        pendingUploads.delete(a.localId);
-        await deps.db.setState(a.localId, { state: 'preview_uploaded', lastError: null, attempts: 0 });
-        sum.previews++;
-      } catch (e) { await markFailure(deps, a, e); fail(e); }
-    }
+    const budgetGate = () => { if (over()) { sum.stoppedEarly = true; return true; } return false; };
+    await uploadMany(deps, enrollFirst, 'preview', groupId, {
+      concurrency: concurrency.preview,
+      gate: budgetGate,
+      allow: (a) => { const d = decide(cond, settings.policy, { isVideo: a.isVideo, size: a.size }); if (!d.allowPreview) log('preview deferred', { reason: d.reason }); return d.allowPreview ? 'ok' : 'stop'; },
+      progress: (done, total) => progress({ phase: 'preview', done, total }),
+      onDone: async (a) => { pendingUploads.delete(a.localId); await deps.db.setState(a.localId, { state: 'preview_uploaded', lastError: null, attempts: 0 }); sum.previews++; },
+      onFail: async (a, e) => { await markFailure(deps, a, e); fail(e); },
+    });
 
     // 5. originals, by policy
     const toOriginal = await deps.db.listByState('preview_uploaded', opts.maxItems);
-    i = 0;
-    for (const a of toOriginal) {
-      if (over()) { sum.stoppedEarly = true; break; }
-      const d = decide(cond, settings.policy, { isVideo: a.isVideo, size: a.size });
-      if (!d.allowOriginal) { if (a.isVideo && d.reason?.includes('cap')) continue; break; }
-      progress({ phase: 'original', done: i++, total: toOriginal.length });
-      try {
-        await uploadOne(deps, a, 'original', groupId);
-        await deps.db.setState(a.localId, { state: 'original_uploaded', lastError: null, attempts: 0 });
-        sum.originals++;
-      } catch (e) { await markFailure(deps, a, e); fail(e); }
-    }
+    await uploadMany(deps, toOriginal, 'original', groupId, {
+      concurrency: concurrency.original,
+      gate: budgetGate,
+      allow: (a) => { const d = decide(cond, settings.policy, { isVideo: a.isVideo, size: a.size }); return d.allowOriginal ? 'ok' : a.isVideo && d.reason?.includes('cap') ? 'skip' : 'stop'; },
+      progress: (done, total) => progress({ phase: 'original', done, total }),
+      onDone: async (a) => { await deps.db.setState(a.localId, { state: 'original_uploaded', lastError: null, attempts: 0 }); sum.originals++; },
+      onFail: async (a, e) => { await markFailure(deps, a, e); fail(e); },
+    });
 
     // 6. enrollment: retried every pass until the server has found faces on the reference photos
     if (pendingEnroll.length && !over()) {
@@ -172,24 +224,69 @@ async function runSyncInner(deps: SyncDeps, opts: { budgetMs: number; maxItems: 
 /** Upload targets handed back by the manifest, valid for 15 minutes; re-issued via /sync/uploads after that. */
 const pendingUploads = new Map<string, import('@minnegela/shared').UploadTarget>();
 
-async function uploadOne(deps: SyncDeps, a: LocalAsset, kind: 'preview' | 'original', groupId: string, presigned?: import('@minnegela/shared').UploadTarget) {
-  if (!a.serverAssetId) throw new Error('no server asset id');
-  const file = kind === 'preview' ? await deps.uploader.preparePreview(a) : await deps.uploader.prepareOriginal(a);
-  try {
-    let target = presigned && kind === 'preview' && Date.parse(presigned.expiresAt) > Date.now() + 60_000 ? presigned : null;
-    if (!target) {
-      const res = await deps.api.uploads(groupId, [{ assetId: a.serverAssetId, kind, bytes: file.bytes, mime: file.mime }]);
-      target = res.items[0]?.upload ?? null;
-      if (!target) throw new Error('server did not issue an upload URL (asset not yours or deleted)');
+type UploadHooks = {
+  concurrency: number;
+  gate: () => boolean;
+  allow: (a: LocalAsset) => 'ok' | 'skip' | 'stop';
+  progress: (done: number, total: number) => void;
+  onDone: (a: LocalAsset) => Promise<void>;
+  onFail: (a: LocalAsset, e: unknown) => Promise<void>;
+};
+
+/**
+ * Upload `assets` of one kind: in batches of PRESIGN_BATCH, prepare the files, presign the ones
+ * without a valid target in ONE /sync/uploads call, then PUT + complete a few at a time.
+ */
+async function uploadMany(deps: SyncDeps, assets: LocalAsset[], kind: 'preview' | 'original', groupId: string, h: UploadHooks): Promise<void> {
+  let done = 0;
+  let stopped = false;
+  for (let start = 0; start < assets.length && !stopped; start += PRESIGN_BATCH) {
+    if (h.gate()) return;
+    const batch: LocalAsset[] = [];
+    for (const a of assets.slice(start, start + PRESIGN_BATCH)) {
+      const v = h.allow(a);
+      if (v === 'stop') { stopped = true; break; }
+      if (v === 'ok') batch.push(a);
     }
-    await deps.uploader.put(target, file);
-    await deps.api.complete(a.serverAssetId, kind, file.sha256, file.bytes);
-  } finally {
-    await file.cleanup();
+    if (!batch.length) continue;
+    // prepare (native image work) for the whole batch
+    const prepared: Array<{ a: LocalAsset; file: PreparedUpload; target: import('@minnegela/shared').UploadTarget | null }> = [];
+    for (const a of batch) {
+      if (!a.serverAssetId) { await h.onFail(a, new Error('no server asset id')); continue; }
+      try {
+        const file = kind === 'preview' ? await deps.uploader.preparePreview(a) : await deps.uploader.prepareOriginal(a);
+        const pre = kind === 'preview' ? pendingUploads.get(a.localId) : undefined;
+        prepared.push({ a, file, target: pre && Date.parse(pre.expiresAt) > Date.now() + 60_000 ? pre : null });
+      } catch (e) { await h.onFail(a, e); }
+    }
+    // one presign call for everything that needs one
+    const need = prepared.filter((p) => !p.target);
+    if (need.length) {
+      try {
+        const res = await deps.api.uploads(groupId, need.map((p) => ({ assetId: p.a.serverAssetId!, kind, bytes: p.file.bytes, mime: p.file.mime })));
+        const byId = new Map(res.items.map((i) => [i.assetId, i.upload]));
+        for (const p of need) p.target = byId.get(p.a.serverAssetId!) ?? null;
+      } catch (e) {
+        for (const p of need) { await p.file.cleanup(); await h.onFail(p.a, e); }
+        if (isTransient(e)) return;   // rate limited or server trouble: stop the phase, next pass retries
+        continue;
+      }
+    }
+    // upload + complete, a few at a time
+    await runPool(prepared, h.concurrency, async (p) => {
+      h.progress(done++, assets.length);
+      try {
+        if (!p.target) throw new Error('server did not issue an upload URL (asset not yours or deleted)');
+        await deps.uploader.put(p.target, p.file);
+        await deps.api.complete(p.a.serverAssetId!, kind, p.file.sha256, p.file.bytes);
+        await h.onDone(p.a);
+      } catch (e) { await h.onFail(p.a, e); } finally { await p.file.cleanup(); }
+      return 'ok';
+    }, h.gate);
   }
 }
 
 async function markFailure(deps: SyncDeps, a: LocalAsset, e: unknown) {
-  const attempts = a.attempts + 1;
+  const attempts = isTransient(e) ? a.attempts : a.attempts + 1;
   await deps.db.setState(a.localId, { attempts, lastError: e instanceof Error ? e.message : String(e), state: attempts >= MAX_ATTEMPTS ? 'failed' : a.state });
 }

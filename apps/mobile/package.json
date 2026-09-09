@@ -9,7 +9,8 @@
     "ios": "expo run:ios",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "doctor": "expo-doctor"
+    "doctor": "expo-doctor",
+    "dev:remote": "EXPO_PACKAGER_PROXY_URL=https://dev.minneglad.no expo start --dev-client --port 8081"
   },
   "dependencies": {
     "@minnegela/shared": "workspace:*",
@@ -19,11 +20,14 @@
     "expo-battery": "~57.0.0",
     "expo-constants": "~57.0.0",
     "expo-crypto": "~57.0.0",
+    "expo-dev-client": "~57.0.18",
     "expo-file-system": "~57.0.6",
     "expo-image": "~57.0.0",
     "expo-image-manipulator": "~57.0.16",
     "expo-image-picker": "~57.0.16",
+    "expo-keep-awake": "~57.0.1",
     "expo-linking": "~57.0.0",
+    "expo-localization": "~57.0.1",
     "expo-media-library": "~57.0.4",
     "expo-network": "~57.0.0",
     "expo-router": "~57.0.19",
@@ -33,7 +37,10 @@
     "expo-task-manager": "~57.0.0",
     "expo-video-thumbnails": "~57.0.1",
     "expo-web-browser": "~57.0.0",
+    "i18next": "^26.4.2",
+    "intl-pluralrules": "^2.0.1",
     "react": "19.2.3",
+    "react-i18next": "^17.0.13",
     "react-native": "0.86.3",
     "react-native-safe-area-context": "^5.7.0",
     "react-native-screens": "^4.26.2",
@@ -41,9 +48,9 @@
   },
   "devDependencies": {
     "@babel/core": "^7.26.0",
+    "@types/node": "^24.0.0",
     "@types/react": "~19.2.0",
     "typescript": "^6.0.3",
-    "vitest": "^5.0.0",
-    "@types/node": "^24.0.0"
+    "vitest": "^5.0.0"
   }
 }

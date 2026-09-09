@@ -33,14 +33,16 @@ export async function albumMap(): Promise<Map<string, string>> {
 
 /** expo-media-library (legacy paged API) as a Library. */
 export const mediaLibrary: Library = {
-  async page({ createdAfter, after, first, includeVideos }) {
+  async page({ after, first, includeVideos }) {
     const albums = await albumMap();
+    // Walk by modification time, not creation time: on Android creationTime is MediaStore's
+    // DATE_TAKEN, which is 0 for anything saved without EXIF dates (Snapchat, WhatsApp, downloads),
+    // and `createdAfter` filters on that same column. modificationTime is always set.
     const res = await MediaLibrary.getAssetsAsync({
       first,
       after: after ?? undefined,
-      createdAfter: createdAfter ?? undefined,
       mediaType: includeVideos ? [MediaLibrary.MediaType.photo, MediaLibrary.MediaType.video] : [MediaLibrary.MediaType.photo],
-      sortBy: [[MediaLibrary.SortBy.creationTime, true]],
+      sortBy: [[MediaLibrary.SortBy.modificationTime, false]],
     });
     const assets: LibraryAsset[] = [];
     for (const a of res.assets) {
@@ -49,6 +51,7 @@ export const mediaLibrary: Library = {
       try { info = await MediaLibrary.getAssetInfoAsync(a, { shouldDownloadFromNetwork: false }); } catch { info = null; }
       const isVideo = a.mediaType === 'video';
       const created = new Date(a.creationTime || a.modificationTime || Date.now());
+      const modified = new Date(a.modificationTime || a.creationTime || Date.now());
       assets.push({
         localId: a.id,
         md5: null,
@@ -57,7 +60,7 @@ export const mediaLibrary: Library = {
         filename: a.filename,
         isVideo,
         createdAt: created.toISOString(),
-        modifiedAt: a.modificationTime ? new Date(a.modificationTime).toISOString() : null,
+        modifiedAt: modified.toISOString(),
         lat: info?.location?.latitude ?? null,
         lon: info?.location?.longitude ?? null,
         w: a.width || null,
