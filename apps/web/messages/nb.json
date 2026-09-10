@@ -75,11 +75,27 @@
     "people": "{count, plural, one {# person} other {# personer}}"
   },
   "timeline": {
-    "previousDay": "Forrige dag",
-    "nextDay": "Neste dag",
-    "day": "Dag",
     "loosePhotos": "{count, plural, one {# løst bilde} other {# løse bilder}}",
-    "nothing": "Ingenting denne dagen."
+    "looseRun": "{count, plural, one {# løst bilde} other {# løse bilder}} over {days} dager",
+    "nothing": "Ingenting denne dagen.",
+    "loading": "Fletter tidslinjen…",
+    "emptyTitle": "Ingenting på tidslinjen ennå",
+    "emptyBody": "Hendelser dukker opp her så snart de første bildene er analysert.",
+    "whoWasThere": "Hvem var der",
+    "whosePhone": "Hvem sin telefon",
+    "summary": "{count, plural, one {# hendelse} other {# hendelser}} · {from} – {to}",
+    "alone": "{name} i {count, plural, one {# hendelse} other {# hendelser}}",
+    "together": "{names} sammen i {count, plural, one {# hendelse} other {# hendelser}}",
+    "clear": "Nullstill",
+    "addStrand": "Legg til en tråd",
+    "legendHint": "Velg en person for å følge tråden. Velg to eller flere for å bare se gangene de var sammen.",
+    "countEvents": "{count, plural, one {# hendelse} other {# hendelser}}",
+    "photos": "{count, plural, one {# bilde} other {# bilder}}",
+    "open": "Åpen",
+    "trip": "Tur",
+    "quiet": "Stille",
+    "awayTitle": "{count, plural, one {# hendelse} other {# hendelser}} i {city}, {from} – {to}",
+    "minimap": "Hopp i tid"
   },
   "people": {
     "members": "Medlemmer",
@@ -101,6 +117,8 @@
     "hide": "Skjul",
     "eventsHeading": "Hendelser",
     "photosHeading": "Bilder",
+    "mergeInto": "Slå sammen med…",
+    "mergeConfirm": "Slå sammen {name} med {into}? Alle ansikter og bilder flyttes over, og denne profilen fjernes.",
     "you": "du"
   },
   "search": {
@@ -128,9 +146,27 @@
     }
   },
   "map": {
-    "banner": "Det interaktive kartet kommer i fase 3. Dette er listen over hendelsesnåler det vil vise.",
+    "loading": "Laster kartet…",
     "noLocation": "Ingen hendelser med sted ennå.",
-    "osm": "OSM ↗"
+    "noLocationBody": "Bilder med GPS setter hendelsene sine på kartet så snart de er analysert.",
+    "eventsWithPlace": "{count, plural, one {# hendelse} other {# hendelser}}",
+    "loosePhotos": "{count, plural, one {# løst bilde} other {# løse bilder}}",
+    "showLoose": "Løse bilder",
+    "fitAll": "Vis alt",
+    "inView": "I bildet",
+    "nothingInView": "Ingen hendelser her i denne perioden.",
+    "stack": "{count} hendelser · trykk for å skille dem",
+    "photos": "{count, plural, one {# bilde} other {# bilder}}",
+    "openEvent": "Åpne hendelsen →",
+    "close": "Lukk",
+    "play": "Spill av gjennom tiden",
+    "pause": "Pause",
+    "wholePeriod": "Hele perioden",
+    "from": "Fra",
+    "to": "Til",
+    "failed": "Kartet kunne ikke starte.",
+    "webglHint": "Nettleseren din har WebGL avslått eller utilgjengelig. Slå på grafikkakselerasjon, eller prøv en annen nettleser.",
+    "styleHint": "Kartstilen kunne ikke hentes fra {url}. En innholdsblokkerer eller brannmur kan stoppe den."
   },
   "mediaGrid": {
     "open": "Åpne",
@@ -278,6 +314,9 @@
     "splitAt": "Del ved {when}",
     "photos": "{count, plural, one {# bilde} other {# bilder}}",
     "namePlaceholder": "Gi denne personen et navn",
+    "addTo": "Legg til hos {name}",
+    "matchesExisting": "{name} finnes allerede i gruppen, så disse bildene legges til der.",
+    "createAnother": "Opprett en ny {name}",
     "name": "Navngi",
     "existing": "Dette er … (eksisterende person)",
     "hide": "Skjul"
@@ -303,6 +342,8 @@
     "event_not_found": "Den hendelsen er ikke i din visning.",
     "no_assets_in_scope": "Ingen av de bildene er i din visning.",
     "cluster_not_found": "Den ansiktsgruppen er allerede borte.",
+    "cluster_already_handled": "De ansiktene er allerede navngitt eller skjult.",
+    "person_name_exists": "Det finnes allerede en person med det navnet. Velg dem fra listen i stedet.",
     "member_person_cannot_merge": "En person knyttet til et medlem kan ikke slås sammen bort.",
     "unknown_target_person": "Personen det skal slås sammen med, er ikke i denne gruppen.",
     "enroll_own_identity_only": "Bare det medlemmet kan registrere sitt eget ansikt.",

@@ -94,7 +94,7 @@ export const API_ERROR_CODES = [
   'group_not_found', 'owner_only', 'invite_invalid',
   'boundary_edits_contributors_only', 'open_close_contributors_only', 'split_contributors_only', 'merge_contributors_only',
   'unknown_person', 'split_point_outside_event', 'event_not_found', 'no_assets_in_scope',
-  'cluster_not_found', 'member_person_cannot_merge', 'unknown_target_person', 'enroll_own_identity_only',
+  'cluster_not_found', 'cluster_already_handled', 'person_name_exists', 'member_person_cannot_merge', 'unknown_target_person', 'enroll_own_identity_only',
   'no_faces_on_reference_photos', 'face_crop_not_ready', 'face_crop_missing',
   'upload_exceeds_size_cap', 'device_not_found',
 ] as const;

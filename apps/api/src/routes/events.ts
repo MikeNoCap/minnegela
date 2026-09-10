@@ -5,7 +5,7 @@ import type { AppContext } from '../app.js';
 import { withViewer, enqueue, sql, encodeCursor, decodeCursor, WBS, INTEREST, visibleEventsWhere, visibleAssetsWhere, events, assets, type ViewerCtx, type Tx } from '../deps.js';
 import { audit } from '../audit.js';
 import { forbidden, badRequest, notFound } from '../errors.js';
-import { rows, iso, EVENT_COLUMNS, MEDIA_COLUMNS, toEventCard, toMediaItem, confidenceKey, titleSql, visibleEventsFrom, type EventRow, type MediaRow, E, A, eventRows, mediaRows, uuidArr, intArr, ts } from '../dto.js';
+import { rows, iso, EVENT_COLUMNS, MEDIA_COLUMNS, toEventCard, eventTitle, toMediaItem, confidenceKey, titleSql, visibleEventsFrom, type EventRow, type MediaRow, E, A, eventRows, mediaRows, uuidArr, intArr, ts } from '../dto.js';
 
 const G = z.object({ g: z.string().uuid() });
 const ID = z.object({ id: z.string().uuid() });
@@ -65,18 +65,48 @@ export async function eventRoutes(app: FastifyInstance, ctx: AppContext) {
     });
   });
 
-  r.get('/v1/groups/:g/map', { schema: { params: G, querystring: z.object({ bbox: z.string().regex(/^-?[\d.]+,-?[\d.]+,-?[\d.]+,-?[\d.]+$/).optional(), from: z.coerce.date().optional(), to: z.coerce.date().optional() }) } }, async (req) => {
+  /**
+   * Everything the timeline explorer needs in one round trip: every visible event (all kinds, quiet ones too) as a
+   * compact row, newest first. A friend group produces a few thousand events over years, which fits comfortably.
+   */
+  r.get('/v1/groups/:g/timeline/overview', { schema: { params: G, querystring: z.object({ limit: z.coerce.number().int().min(1).max(20000).default(8000) }) } }, async (req) => {
+    const v = await req.ctxFor(req.params.g);
+    return withViewer(ctx.db, v, async (tx) => {
+      const list = await rows<EventRow & { city: string | null }>(tx, sql`select ${EVENT_COLUMNS}, p.city ${visibleEventsFrom(v)} order by e.start_at desc, e.id desc limit ${req.query.limit}`);
+      const items = list.map((r) => ({
+        id: r.id, kind: r.kind, title: eventTitle({ ...r, start_at: new Date(r.start_at) }, req.locale),
+        startAt: iso(r.start_at)!, endAt: iso(r.end_at)!,
+        center: r.center_lat !== null && r.center_lon !== null ? { lat: r.center_lat, lon: r.center_lon } : null,
+        placeName: r.place_name, city: r.city, contributorIds: r.contributor_ids, personIds: r.person_ids,
+        nAssets: r.n_assets, nVideos: r.n_videos, coverBlobId: r.cover_blob_id, isPublicToGroup: r.is_public_to_group, interest: r.interest,
+      }));
+      return { items, span: items.length ? { from: items[items.length - 1]!.startAt, to: items[0]!.endAt } : null };
+    });
+  });
+
+  /** Event pins (with enough to draw a photo marker) plus geotagged loose media points, both in the viewer's scope. */
+  r.get('/v1/groups/:g/map', { schema: { params: G, querystring: z.object({ bbox: z.string().regex(/^-?[\d.]+,-?[\d.]+,-?[\d.]+,-?[\d.]+$/).optional(), from: z.coerce.date().optional(), to: z.coerce.date().optional(), loose: z.coerce.boolean().default(true) }) } }, async (req) => {
     const v = await req.ctxFor(req.params.g);
     const bb = req.query.bbox?.split(',').map(Number) as [number, number, number, number] | undefined;
     return withViewer(ctx.db, v, async (tx) => {
-      const pins = await rows<{ id: string; title: string | null; lat: number; lon: number; n_assets: number; start_at: Date; end_at: Date }>(tx, sql`
-        select e.id, ${titleSql(req.locale)} as title, e.center_lat as lat, e.center_lon as lon, e.n_assets, e.start_at, e.end_at
-        from events e where ${visibleEventsWhere(v, E)} and e.center_lat is not null and e.kind <> 'loose'
+      const pins = await rows<{ id: string; kind: 'event' | 'trip' | 'loose'; title: string | null; lat: number; lon: number; n_assets: number; n_videos: number; start_at: Date; end_at: Date; cover_blob_id: string | null; person_ids: number[]; contributor_ids: string[]; place_name: string | null; city: string | null }>(tx, sql`
+        select e.id, e.kind, ${titleSql(req.locale)} as title, e.center_lat as lat, e.center_lon as lon, e.n_assets, e.n_videos, e.start_at, e.end_at, e.cover_blob_id, e.person_ids, e.contributor_ids, p.name as place_name, p.city
+        from events e left join places p on p.id = e.place_id where ${visibleEventsWhere(v, E)} and e.center_lat is not null and e.kind <> 'loose'
         ${bb ? sql`and e.center_lat between ${bb[1]} and ${bb[3]} and e.center_lon between ${bb[0]} and ${bb[2]}` : sql``}
         ${req.query.from ? sql`and e.end_at >= ${ts(req.query.from)}` : sql``} ${req.query.to ? sql`and e.start_at <= ${ts(req.query.to)}` : sql``}
         order by e.start_at desc limit 2000`);
-      const items = pins.map((p) => ({ id: p.id, title: p.title ?? iso(p.start_at)!.slice(0, 10), lat: p.lat, lon: p.lon, nAssets: p.n_assets, startAt: iso(p.start_at)!, endAt: iso(p.end_at)! }));
-      return { items, pins: items };
+      const items = pins.map((p) => ({
+        id: p.id, kind: p.kind, title: p.title ?? iso(p.start_at)!.slice(0, 10), lat: p.lat, lon: p.lon, nAssets: p.n_assets, nVideos: p.n_videos,
+        startAt: iso(p.start_at)!, endAt: iso(p.end_at)!, coverBlobId: p.cover_blob_id, personIds: p.person_ids ?? [], contributorIds: p.contributor_ids ?? [], placeName: p.place_name, city: p.city,
+      }));
+      // Loose photos with a location: the small dots between the pins. Same visibility predicate as everywhere else.
+      const loose = req.query.loose ? await mediaRows(tx, sql`select ${MEDIA_COLUMNS} from assets a join blobs b on b.id = a.blob_id
+        where ${visibleAssetsWhere(v, A)} and b.lat is not null and b.lon is not null and a.deleted_at is null
+          and not exists (select 1 from event_assets ea join events e on e.id = ea.event_id where ea.asset_id = a.id and e.kind <> 'loose' and e.deleted_at is null)
+          ${bb ? sql`and b.lat between ${bb[1]} and ${bb[3]} and b.lon between ${bb[0]} and ${bb[2]}` : sql``}
+          ${req.query.from ? sql`and b.captured_at >= ${ts(req.query.from)}` : sql``} ${req.query.to ? sql`and b.captured_at <= ${ts(req.query.to)}` : sql``}
+        order by b.captured_at desc limit 3000`) : [];
+      return { items, pins: items, loose: loose.map(toMediaItem) };
     });
   });
 

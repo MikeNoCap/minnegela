@@ -6,7 +6,8 @@ export type EnqueueOpts = { priority?: number; runAfterSeconds?: number; maxAtte
 
 /**
  * Insert a job. Jobs with a dedupe key (recluster, group-wide identify/titles) coalesce with a
- * pending job of the same key: the run_after is pushed back (debounce) and the time window merged.
+ * pending job of the same key: the run_after is pushed back (debounce), the time window merged and a
+ * person-scoped identify widens to the whole group when the pending one targets someone else.
  */
 export async function enqueue<K extends JobKind>(q: Queryable, kind: K, payload: JobPayload<K>, opts: EnqueueOpts = {}): Promise<void> {
   JobPayloads[kind].parse(payload);
@@ -26,11 +27,13 @@ export async function enqueue<K extends JobKind>(q: Queryable, kind: K, payload:
     do update set
       run_after = greatest(jobs.run_after, excluded.run_after),
       priority = greatest(jobs.priority, excluded.priority),
-      payload = jobs.payload || excluded.payload
+      payload = (jobs.payload || excluded.payload
         || case when jobs.payload ? 'from' and excluded.payload ? 'from'
              then jsonb_build_object('from', least(jobs.payload->>'from', excluded.payload->>'from')) else '{}'::jsonb end
         || case when jobs.payload ? 'to' and excluded.payload ? 'to'
-             then jsonb_build_object('to', greatest(jobs.payload->>'to', excluded.payload->>'to')) else '{}'::jsonb end`);
+             then jsonb_build_object('to', greatest(jobs.payload->>'to', excluded.payload->>'to')) else '{}'::jsonb end)
+        -- Two different persons (or a person and the whole group) coalesce into one group-wide run, never into the last person.
+        - case when jobs.payload->'personId' is distinct from excluded.payload->'personId' then 'personId' else '' end`);
 }
 
 export type ClaimedJob = { id: number; kind: JobKind; payload: Record<string, unknown>; attempts: number; maxAttempts: number };

@@ -75,11 +75,27 @@
     "people": "{count, plural, one {# person} other {# people}}"
   },
   "timeline": {
-    "previousDay": "Previous day",
-    "nextDay": "Next day",
-    "day": "Day",
     "loosePhotos": "{count, plural, one {# loose photo} other {# loose photos}}",
-    "nothing": "Nothing on this day."
+    "looseRun": "{count, plural, one {# loose photo} other {# loose photos}} over {days} days",
+    "nothing": "Nothing on this day.",
+    "loading": "Weaving the timeline…",
+    "emptyTitle": "Nothing on the timeline yet",
+    "emptyBody": "Events appear here as soon as the first photos are analyzed.",
+    "whoWasThere": "Who was there",
+    "whosePhone": "Whose phone",
+    "summary": "{count, plural, one {# event} other {# events}} · {from} – {to}",
+    "alone": "{name} in {count, plural, one {# event} other {# events}}",
+    "together": "{names} together in {count, plural, one {# event} other {# events}}",
+    "clear": "Clear",
+    "addStrand": "Add a strand",
+    "legendHint": "Pick a person to follow their strand. Pick two or more to keep only the times they were together.",
+    "countEvents": "{count, plural, one {# event} other {# events}}",
+    "photos": "{count, plural, one {# photo} other {# photos}}",
+    "open": "Open",
+    "trip": "Trip",
+    "quiet": "Quiet",
+    "awayTitle": "{count, plural, one {# event} other {# events}} in {city}, {from} – {to}",
+    "minimap": "Jump in time"
   },
   "people": {
     "members": "Members",
@@ -101,6 +117,8 @@
     "hide": "Hide",
     "eventsHeading": "Events",
     "photosHeading": "Photos",
+    "mergeInto": "Merge into…",
+    "mergeConfirm": "Merge {name} into {into}? All faces and photos move over and this profile is removed.",
     "you": "you"
   },
   "search": {
@@ -128,9 +146,27 @@
     }
   },
   "map": {
-    "banner": "The interactive map arrives in Phase 3. This is the list of event pins it will show.",
+    "loading": "Loading the map…",
     "noLocation": "No events with a location yet.",
-    "osm": "OSM ↗"
+    "noLocationBody": "Photos with GPS put their events on the map as soon as they are analyzed.",
+    "eventsWithPlace": "{count, plural, one {# event} other {# events}}",
+    "loosePhotos": "{count, plural, one {# loose photo} other {# loose photos}}",
+    "showLoose": "Loose photos",
+    "fitAll": "Show everything",
+    "inView": "In view",
+    "nothingInView": "No events here in this period.",
+    "stack": "{count} events · tap to separate",
+    "photos": "{count, plural, one {# photo} other {# photos}}",
+    "openEvent": "Open event →",
+    "close": "Close",
+    "play": "Play through time",
+    "pause": "Pause",
+    "wholePeriod": "Whole period",
+    "from": "From",
+    "to": "To",
+    "failed": "The map could not start.",
+    "webglHint": "Your browser has WebGL switched off or unavailable. Turn on graphics acceleration, or try another browser.",
+    "styleHint": "The map style could not be fetched from {url}. A content blocker or a firewall may be stopping it."
   },
   "mediaGrid": {
     "open": "Open",
@@ -278,6 +314,9 @@
     "splitAt": "Split at {when}",
     "photos": "{count, plural, one {# photo} other {# photos}}",
     "namePlaceholder": "Name this person",
+    "addTo": "Add to {name}",
+    "matchesExisting": "{name} is already in the group, so these photos will be added to them.",
+    "createAnother": "Create another {name}",
     "name": "Name",
     "existing": "This is… (existing person)",
     "hide": "Hide"
@@ -303,6 +342,8 @@
     "event_not_found": "That event is not in your view.",
     "no_assets_in_scope": "None of those photos are in your view.",
     "cluster_not_found": "That group of faces is gone already.",
+    "cluster_already_handled": "Those faces were already named or hidden.",
+    "person_name_exists": "There is already a person with that name. Pick them from the list instead.",
     "member_person_cannot_merge": "A person linked to a member can’t be merged away.",
     "unknown_target_person": "The person to merge into is not in this group.",
     "enroll_own_identity_only": "Only that member can enroll their own face.",

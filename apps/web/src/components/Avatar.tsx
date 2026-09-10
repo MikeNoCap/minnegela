@@ -1,7 +1,9 @@
 import { initials } from '@/lib/format';
 
 const HUES = [255, 20, 140, 200, 300, 40, 170, 330];
-function hue(seed: string | number) { let h = 0; for (const c of String(seed)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return HUES[h % HUES.length]; }
+export function hue(seed: string | number) { let h = 0; for (const c of String(seed)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return HUES[h % HUES.length]!; }
+/** The saturated version of an avatar's hue: strands on the timeline, rings on the map. */
+export const strandColor = (seed: string | number) => `hsl(${hue(seed)} 55% 52%)`;
 
 export function Avatar({ name, seed, size = 22, title }: { name: string | null | undefined; seed?: string | number; size?: number; title?: string }) {
   const h = hue(seed ?? name ?? '?');

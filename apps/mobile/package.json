@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "doctor": "expo-doctor",
+    "eas-build-post-install": "pnpm --filter @minnegela/shared build && test -f node_modules/@minnegela/shared/dist/index.js",
     "dev:remote": "EXPO_PACKAGER_PROXY_URL=https://dev.minneglad.no expo start --dev-client --port 8081"
   },
   "dependencies": {
@@ -50,6 +51,7 @@
     "@babel/core": "^7.26.0",
     "@types/node": "^24.0.0",
     "@types/react": "~19.2.0",
+    "babel-preset-expo": "~57.0.10",
     "typescript": "^6.0.3",
     "vitest": "^5.0.0"
   }

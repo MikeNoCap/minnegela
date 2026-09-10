@@ -53,11 +53,13 @@ def enqueue(conn: psycopg.Connection, kind: str, payload: dict[str, Any], *, pri
         do update set
           run_after = greatest(jobs.run_after, excluded.run_after),
           priority = greatest(jobs.priority, excluded.priority),
-          payload = jobs.payload || excluded.payload
+          payload = (jobs.payload || excluded.payload
             || case when jobs.payload ? 'from' and excluded.payload ? 'from'
                  then jsonb_build_object('from', least(jobs.payload->>'from', excluded.payload->>'from')) else '{}'::jsonb end
             || case when jobs.payload ? 'to' and excluded.payload ? 'to'
-                 then jsonb_build_object('to', greatest(jobs.payload->>'to', excluded.payload->>'to')) else '{}'::jsonb end
+                 then jsonb_build_object('to', greatest(jobs.payload->>'to', excluded.payload->>'to')) else '{}'::jsonb end)
+            -- different persons (or person + whole group) widen to a group-wide run
+            - case when jobs.payload->'personId' is distinct from excluded.payload->'personId' then 'personId' else '' end
         """,
         (kind, body, priority, key, run_after_seconds, max_attempts),
     )

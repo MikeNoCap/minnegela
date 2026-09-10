@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { useTranslation } from 'react-i18next';
 import { useApp } from '@/store/context';
 import { importPick } from '@/sync/enrollImport';
+import { indexLibraryAsset } from '@/sync/adapters';
 import { Screen, Card, P, H2, Button, Banner } from '@/ui/components';
 
 /**
@@ -32,6 +33,11 @@ export default function Enroll() {
     for (const a of res.assets.slice(0, 5)) {
       let assetId = a.assetId ?? null;
       let how = assetId ? 'picker-id' : 'none';
+      if (assetId && !(await app.db.get(assetId))) {
+        // iOS (and some Android pickers) name the library asset, but before the first library walk the
+        // index has no row for it; write one now so the sync can push the reference photo first.
+        try { await indexLibraryAsset(app.db, assetId); how = 'indexed'; } catch { assetId = null; how = 'none'; }
+      }
       if (!assetId && a.fileName) {
         const matches = await app.db.findByFile(a.fileName, a.fileSize ?? null);
         const m = matches.length === 1 ? matches[0]

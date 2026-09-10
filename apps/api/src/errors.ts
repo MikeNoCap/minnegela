@@ -15,7 +15,7 @@ export const notFound = (code: ApiErrorCode = 'not_found', detail = 'Not found')
 export const badRequest = (code: ApiErrorCode, detail: string, extra?: Record<string, unknown>) => new HttpError(400, 'Bad Request', code, detail, extra);
 export const unauthorized = (code: ApiErrorCode = 'sign_in_required', detail = 'Sign in required') => new HttpError(401, 'Unauthorized', code, detail);
 export const forbidden = (code: ApiErrorCode = 'not_allowed', detail = 'Not allowed') => new HttpError(403, 'Forbidden', code, detail);
-export const conflict = (code: ApiErrorCode, detail: string) => new HttpError(409, 'Conflict', code, detail);
+export const conflict = (code: ApiErrorCode, detail: string, extra?: Record<string, unknown>) => new HttpError(409, 'Conflict', code, detail, extra);
 
 export function errorHandler(err: FastifyError | HttpError | Error, req: FastifyRequest, reply: FastifyReply) {
   const send = (status: number, title: string, code: ApiErrorCode, detail?: string, extra?: Record<string, unknown>) =>

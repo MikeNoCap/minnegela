@@ -74,6 +74,14 @@ describe.skipIf(!HAS_DB)('presence-gated visibility over the API', () => {
 
       const map = await app.inject({ method: 'GET', url: `/v1/groups/${fx.groupId}/map`, headers: h });
       expect(map.statusCode).toBe(200);
+      expect(Array.isArray(map.json().items) && Array.isArray(map.json().loose)).toBe(true);
+      for (const m of map.json().loose as Array<{ assetId: string }>) expect(Object.values(fx.assetsByEvent).some((ids) => ids.has(m.assetId)), `${who} loose ${m.assetId}`).toBe(false);
+
+      // the braid overview is the same scope as the events list, every kind included
+      const overview = await app.inject({ method: 'GET', url: `/v1/groups/${fx.groupId}/timeline/overview`, headers: h });
+      expect(overview.statusCode).toBe(200);
+      const overviewIds = overview.json().items.filter((e: { kind: string }) => e.kind !== 'loose').map((e: { id: string }) => e.id).sort();
+      expect(overviewIds).toEqual(ids);
     });
 
     it(`${who}: media urls are signed only for visible blobs; people counts are per viewer`, async () => {

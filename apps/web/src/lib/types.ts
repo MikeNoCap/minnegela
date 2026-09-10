@@ -49,7 +49,20 @@ export type MediaDetail = MediaItem & {
 };
 
 export type TimelineDay = { day: string; events: EventCard[]; loose: MediaItem[] };
-export type MapPin = { id: string; title: string; lat: number; lon: number; startAt: string; nAssets: number };
+/** GET /v1/groups/:g/timeline/overview — one compact row per visible event, every kind, newest first. */
+export type TimelineEvent = {
+  id: string; kind: 'event' | 'trip' | 'loose'; title: string; startAt: string; endAt: string;
+  center: { lat: number; lon: number } | null; placeName: string | null; city: string | null;
+  contributorIds: string[]; personIds: number[]; nAssets: number; nVideos: number; coverBlobId: string | null;
+  isPublicToGroup: boolean; interest: number | null;
+};
+export type TimelineOverview = { items: TimelineEvent[]; span: { from: string; to: string } | null };
+/** GET /v1/groups/:g/map */
+export type MapPin = {
+  id: string; kind: 'event' | 'trip' | 'loose'; title: string; lat: number; lon: number; nAssets: number; nVideos: number; startAt: string; endAt: string;
+  coverBlobId: string | null; personIds: number[]; contributorIds: string[]; placeName: string | null; city: string | null;
+};
+export type MapData = { items: MapPin[]; loose: MediaItem[] };
 export type AuditRow = { id: number; userId: string | null; userName?: string | null; action: string; targetType: string | null; targetId: string | null; at: string; meta?: Record<string, unknown> | null };
 export type Invite = { code: string; expiresAt: string };
 export type SearchResult = { parsed: SearchChip[]; events?: EventCard[]; media?: MediaItem[]; mode?: 'events' | 'media' };

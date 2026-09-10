@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { AppContext } from '../app.js';
 import { withViewer, enqueue, sql, visibleBlobIds, visibleAssetsWhere, visibleEventsWhere, assets, events, type ViewerCtx, type Tx } from '../deps.js';
 import { audit } from '../audit.js';
-import { badRequest, notFound, forbidden } from '../errors.js';
+import { badRequest, notFound, forbidden, conflict } from '../errors.js';
 import { rows, EVENT_COLUMNS, MEDIA_COLUMNS, toEventCard, toMediaItem, visibleEventsFrom, type EventRow, type MediaRow, E, A, eventRows, mediaRows, uuidArr } from '../dto.js';
 
 const G = z.object({ g: z.string().uuid() });
@@ -14,6 +14,26 @@ type PersonRow = { id: number; name: string | null; user_id: string | null; cove
 async function findPerson(tx: Tx, ctx: ViewerCtx, id: number): Promise<PersonRow | undefined> {
   const [p] = await rows<PersonRow>(tx, sql`select id, name, user_id, cover_face_id, hidden, group_id from persons where id = ${id} and group_id = ${ctx.groupId}::uuid`);
   return p;
+}
+
+/** Same name (case- and whitespace-insensitive) already in the group; the member-linked person wins ties. */
+async function findPersonByName(tx: Tx, ctx: ViewerCtx, name: string): Promise<PersonRow | undefined> {
+  const [p] = await rows<PersonRow>(tx, sql`select id, name, user_id, cover_face_id, hidden, group_id from persons
+    where group_id = ${ctx.groupId}::uuid and not hidden and lower(btrim(name)) = lower(btrim(${name}))
+    order by (user_id is not null) desc, id limit 1`);
+  return p;
+}
+
+/** Attach every visible face of an unnamed cluster to a person and retire the cluster, in one step. */
+async function assignCluster(tx: Tx, ctx: ViewerCtx, clusterId: string, personId: number): Promise<{ labelled: number; applied: number }> {
+  const [uc] = await rows<{ dismissed: boolean; face_ids: string[] }>(tx, sql`select uc.dismissed,
+      array(select f.id from faces f where f.id = any(uc.face_ids) and f.blob_id in ${visibleBlobIds(ctx)}) as face_ids
+    from unknown_clusters uc where uc.id = ${clusterId}::uuid and uc.group_id = ${ctx.groupId}::uuid`);
+  if (!uc) throw notFound('cluster_not_found', 'Cluster not found');
+  if (uc.dismissed) throw conflict('cluster_already_handled', 'These faces were already named or hidden');
+  const faces = await confirmFaces(tx, ctx, uc.face_ids, personId);
+  await tx.execute(sql`update unknown_clusters set dismissed = true where id = ${clusterId}::uuid`);
+  return faces;
 }
 
 /** Record confirmations and apply them where RLS allows (see README: faces need an update policy for the immediate flip). */
@@ -54,25 +74,24 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
     });
   });
 
-  r.post('/v1/groups/:g/people', { schema: { params: G, body: z.object({ name: z.string().min(1).max(100), clusterId: z.string().uuid().optional() }) } }, async (req, reply) => {
+  r.post('/v1/groups/:g/people', { schema: { params: G, body: z.object({ name: z.string().min(1).max(100), clusterId: z.string().uuid().optional(), allowDuplicate: z.boolean().default(false) }) } }, async (req, reply) => {
     const v = await req.ctxFor(req.params.g);
+    const name = req.body.name.trim();
+    if (!name) throw badRequest('validation_failed', 'Name is empty');
     const out = await withViewer(ctx.db, v, async (tx) => {
-      const [p] = await rows<{ id: number }>(tx, sql`insert into persons (group_id, name) values (${v.groupId}::uuid, ${req.body.name}) returning id`);
-      let faces = { labelled: 0, applied: 0 };
-      if (req.body.clusterId) {
-        const [uc] = await rows<{ face_ids: string[] }>(tx, sql`select array(select f.id from faces f where f.id = any(uc.face_ids) and f.blob_id in ${visibleBlobIds(v)}) as face_ids from unknown_clusters uc where uc.id = ${req.body.clusterId}::uuid`);
-        if (!uc) throw notFound('cluster_not_found', 'Cluster not found');
-        faces = await confirmFaces(tx, v, uc.face_ids, p!.id);
-        await tx.execute(sql`update unknown_clusters set dismissed = true where id = ${req.body.clusterId}::uuid`);
-      }
+      // A second "Nico" is almost always the same Nico: refuse unless the client says it really is another person.
+      const existing = req.body.allowDuplicate ? undefined : await findPersonByName(tx, v, name);
+      if (existing) throw conflict('person_name_exists', `${existing.name} already exists in this group`, { existingPersonId: existing.id });
+      const [p] = await rows<{ id: number }>(tx, sql`insert into persons (group_id, name) values (${v.groupId}::uuid, ${name}) returning id`);
+      const faces = req.body.clusterId ? await assignCluster(tx, v, req.body.clusterId, p!.id) : { labelled: 0, applied: 0 };
       await enqueue(tx, 'identify', { groupId: v.groupId, personId: p!.id }, { runAfterSeconds: 30 });
-      await audit(tx, v, 'person.create', { type: 'person', id: String(p!.id) }, { name: req.body.name, clusterId: req.body.clusterId ?? null, faces }, req);
-      return { id: p!.id, name: req.body.name, faces };
+      await audit(tx, v, 'person.create', { type: 'person', id: String(p!.id) }, { name, clusterId: req.body.clusterId ?? null, faces }, req);
+      return { id: p!.id, name, faces };
     });
     return reply.status(201).send(out);
   });
 
-  r.patch('/v1/people/:id', { schema: { params: PID, body: z.object({ name: z.string().min(1).max(100).optional(), hidden: z.boolean().optional(), mergeInto: z.number().int().optional() }) } }, async (req) => {
+  r.patch('/v1/people/:id', { schema: { params: PID, body: z.object({ name: z.string().min(1).max(100).optional(), hidden: z.boolean().optional(), mergeInto: z.number().int().optional(), allowDuplicate: z.boolean().default(false) }) } }, async (req) => {
     const { ctx: v, found: p } = await req.ctxWhere((tx, c) => findPerson(tx, c, req.params.id));
     return withViewer(ctx.db, v, async (tx) => {
       if (req.body.mergeInto !== undefined) {
@@ -88,7 +107,11 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
         await audit(tx, v, 'person.merge', { type: 'person', id: String(p.id) }, { into: target.id, faces }, req);
         return { id: target.id, mergedFrom: p.id, faces };
       }
-      if (req.body.name !== undefined) await tx.execute(sql`update persons set name = ${req.body.name} where id = ${p.id}`);
+      if (req.body.name !== undefined) {
+        const other = req.body.allowDuplicate ? undefined : await findPersonByName(tx, v, req.body.name);
+        if (other && other.id !== p.id) throw conflict('person_name_exists', `${other.name} already exists in this group`, { existingPersonId: other.id });
+        await tx.execute(sql`update persons set name = ${req.body.name.trim()} where id = ${p.id}`);
+      }
       if (req.body.hidden !== undefined) await tx.execute(sql`update persons set hidden = ${req.body.hidden} where id = ${p.id}`);
       await audit(tx, v, 'person.update', { type: 'person', id: String(p.id) }, req.body, req);
       const after = await findPerson(tx, v, p.id);
@@ -121,7 +144,7 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
     const v = await req.ctxFor(req.params.g);
     return withViewer(ctx.db, v, async (tx) => {
       const unnamed = await rows<{ id: string; n: number; cover_face_id: string | null; visible_faces: string[] }>(tx, sql`select uc.id, uc.n, uc.cover_face_id,
-          array(select f.id from faces f where f.id = any(uc.face_ids) and f.blob_id in ${visibleBlobIds(v)}) as visible_faces
+          array(select f.id from faces f where f.id = any(uc.face_ids) and f.person_id is null and f.blob_id in ${visibleBlobIds(v)}) as visible_faces
         from unknown_clusters uc where uc.group_id = ${v.groupId}::uuid and not uc.dismissed order by uc.n desc limit 50`);
       const low = await rows<{ id: string; blob_id: string; box: unknown; person_id: number; name: string | null; tier: string; match_score: number | null }>(tx, sql`
         select f.id, f.blob_id, f.box, f.person_id, p.name, f.tier, f.match_score from faces f join persons p on p.id = f.person_id
@@ -134,6 +157,19 @@ export async function peopleRoutes(app: FastifyInstance, ctx: AppContext) {
         lowConfidenceFaces: low.map((f) => ({ id: f.id, blobId: f.blob_id, box: f.box, personId: f.person_id, personName: f.name, matchScore: f.match_score, tier: f.tier })),
         suggestedSplits: splits.map((e) => ({ eventId: e.id, title: toEventCard(e, req.locale).title, at: (e.suggested_splits ?? []).map((d) => d.toISOString()) })),
       };
+    });
+  });
+
+  /** "This is …": every face in the cluster becomes a confirmed face of an existing person and the cluster leaves the queue. */
+  r.post('/v1/groups/:g/review/clusters/:clusterId/assign', { schema: { params: G.extend({ clusterId: z.string().uuid() }), body: z.object({ personId: z.number().int() }) } }, async (req) => {
+    const v = await req.ctxFor(req.params.g);
+    return withViewer(ctx.db, v, async (tx) => {
+      const p = await findPerson(tx, v, req.body.personId);
+      if (!p) throw badRequest('unknown_person', 'Unknown person');
+      const faces = await assignCluster(tx, v, req.params.clusterId, p.id);
+      await enqueue(tx, 'identify', { groupId: v.groupId, personId: p.id }, { runAfterSeconds: 30 });
+      await audit(tx, v, 'cluster.assign', { type: 'cluster', id: req.params.clusterId }, { personId: p.id, faces }, req);
+      return { clusterId: req.params.clusterId, personId: p.id, name: p.name, faces };
     });
   });
 

@@ -2,7 +2,7 @@
 import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api, qs } from './api';
 import { useGroupId } from './group';
-import type { EventCard, EventDetail, MediaItem, Page, PersonSummary, MemberSummary, VisibilityInfo, GroupStatus, ReviewQueue, PersonDetail, MediaDetail, SearchResult, TimelineDay, GroupInfo, AuditRow, Invite, MapPin } from './types';
+import type { EventCard, EventDetail, MediaItem, Page, PersonSummary, MemberSummary, VisibilityInfo, GroupStatus, ReviewQueue, PersonDetail, MediaDetail, SearchResult, TimelineDay, TimelineOverview, GroupInfo, AuditRow, Invite, MapData } from './types';
 
 export function useEvents(filters: { from?: string; to?: string; people?: number[]; place?: string; quiet?: 'hide' | 'only' | 'all' } = {}) {
   const g = useGroupId();
@@ -56,9 +56,13 @@ export function useTimeline(day: string) {
   const g = useGroupId();
   return useQuery({ queryKey: ['timeline', g, day], queryFn: () => api<TimelineDay | { items: TimelineDay[] }>(`/v1/groups/${g}/timeline${qs({ day })}`), enabled: !!g });
 }
+export function useTimelineOverview() {
+  const g = useGroupId();
+  return useQuery({ queryKey: ['timeline-overview', g], queryFn: () => api<TimelineOverview>(`/v1/groups/${g}/timeline/overview`), enabled: !!g, staleTime: 60_000 });
+}
 export function useMap(f: { from?: string; to?: string } = {}) {
   const g = useGroupId();
-  return useQuery({ queryKey: ['map', g, f], queryFn: () => api<{ items: MapPin[] } | MapPin[]>(`/v1/groups/${g}/map${qs(f)}`).then((r) => (Array.isArray(r) ? r : r.items)), enabled: !!g });
+  return useQuery({ queryKey: ['map', g, f], queryFn: () => api<MapData>(`/v1/groups/${g}/map${qs(f)}`).then((r) => ({ items: r.items ?? [], loose: r.loose ?? [] })), enabled: !!g, staleTime: 60_000 });
 }
 export function useAudit(enabled: boolean) {
   const g = useGroupId();
@@ -87,8 +91,9 @@ export const faceActions = {
   label: (faceId: string, personId: number, verdict: 'confirm' | 'reject') => api(`/v1/faces/${faceId}/label`, { method: 'POST', body: { personId, verdict } }),
 };
 export const peopleActions = {
-  create: (g: string, body: { name: string; clusterId?: string }) => api<PersonSummary>(`/v1/groups/${g}/people`, { method: 'POST', body }),
-  patch: (id: number, body: { name?: string; hidden?: boolean; mergeInto?: number }) => api<PersonSummary>(`/v1/people/${id}`, { method: 'PATCH', body }),
+  create: (g: string, body: { name: string; clusterId?: string; allowDuplicate?: boolean }) => api<PersonSummary>(`/v1/groups/${g}/people`, { method: 'POST', body }),
+  patch: (id: number, body: { name?: string; hidden?: boolean; mergeInto?: number; allowDuplicate?: boolean }) => api<PersonSummary>(`/v1/people/${id}`, { method: 'PATCH', body }),
+  assignCluster: (g: string, clusterId: string, personId: number) => api(`/v1/groups/${g}/review/clusters/${clusterId}/assign`, { method: 'POST', body: { personId } }),
   dismissCluster: (g: string, clusterId: string) => api(`/v1/groups/${g}/review/clusters/${clusterId}/dismiss`, { method: 'POST', body: {} }),
 };
 export const groupActions = {
