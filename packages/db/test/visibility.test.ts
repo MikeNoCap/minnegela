@@ -92,6 +92,37 @@ describe.skipIf(!ADMIN)('presence-gated visibility', () => {
     expect(asset!.personIds).toEqual([fx.users.emma.personId]);
   });
 
+  it('presence needs camera-origin media: received media never unlocks an event (§7.4)', async () => {
+    const shared = fx.events.sharedContrib;
+    const all = fx.assetsByEvent[shared]!;
+    const emmas = all.slice(3);   // fixture order: mikkel's three, then emma's three
+    const arr = (ids: string[]) => sql.raw(`array[${ids.map((i) => `'${i}'`).join(',')}]::uuid[]`);
+    const contributors = async () => (await worker.db.select({ c: s.events.contributorIds }).from(s.events).where(sql`id = ${shared}`))[0]!.c.sort();
+    try {
+      // emma's copies were saved from Snapchat: they stay in the event, but she was not shown to be there
+      await worker.db.update(s.assets).set({ origin: 'received' }).where(sql`id = any(${arr(emmas)})`);
+      expect(await contributors()).toEqual([fx.users.mikkel.id]);
+      expect(await eventsViaRls('emma')).not.toContain(shared);
+      expect(await eventsViaRls('mikkel')).toContain(shared);
+      // an uncertain-tier camera photo is no evidence either
+      await worker.db.update(s.assets).set({ origin: 'camera' }).where(sql`id = any(${arr(emmas)})`);
+      await worker.db.update(s.eventAssets).set({ tier: 'uncertain' }).where(sql`asset_id = any(${arr(emmas)})`);
+      expect(await contributors()).toEqual([fx.users.mikkel.id]);
+      // no tier evidence, but mikkel's copies are camera-made: only he counts
+      await worker.db.update(s.assets).set({ origin: 'received' }).where(sql`id = any(${arr(emmas)})`);
+      await worker.db.update(s.eventAssets).set({ tier: 'uncertain' }).where(sql`asset_id = any(${arr(all)})`);
+      expect(await contributors()).toEqual([fx.users.mikkel.id]);
+      // nobody with evidence at all → every owner keeps their own media reachable (loose groups)
+      await worker.db.update(s.assets).set({ origin: 'received' }).where(sql`id = any(${arr(all)})`);
+      expect(await contributors()).toEqual([fx.users.mikkel.id, fx.users.emma.id].sort());
+    } finally {
+      await worker.db.update(s.eventAssets).set({ tier: 'confirmed' }).where(sql`asset_id = any(${arr(all)})`);
+      await worker.db.update(s.assets).set({ origin: 'camera' }).where(sql`id = any(${arr(all)})`);
+    }
+    expect(await contributors()).toEqual([fx.users.mikkel.id, fx.users.emma.id].sort());
+    expect(await eventsViaRls('emma')).toContain(shared);
+  });
+
   it('the api role cannot read the ml schema', async () => {
     await expect(api.sql`select count(*) from ml.face_embeddings`).rejects.toThrow(/permission denied/);
   });

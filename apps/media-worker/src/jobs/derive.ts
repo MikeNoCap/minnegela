@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises';
 import sharp from 'sharp';
 import { sql, eq, and, ne, isNotNull, enqueue, blobs, assets, derivatives } from '@minnegela/db';
 import { STORAGE_KEYS, PREVIEW, THUMB, JobPayloads } from '@minnegela/shared';
+import type { Origin } from '@minnegela/shared';
 import type { Ctx } from '../context.js';
 import { readMetadata, looksLikeScreenshot, looksReencoded, type Metadata } from '../metadata.js';
 import { phash } from '../phash.js';
@@ -47,9 +48,14 @@ export async function mergeExactDuplicate(ctx: Ctx, blob: Pick<typeof blobs.$inf
  * §8.2 / §11 time rules. Returns the RAW capture instant (no device clock correction: the ML worker's
  * `recluster` applies devices.clock_offset_s at read time), its zone and whether the time is trustworthy.
  *   EXIF with explicit offset > OS creation date (absolute) > EXIF wall clock as UTC > upload time
+ * Trust (§7.4): a file the camera wrote (`origin = camera`) has a real OS creation time; anything
+ * received or of unknown provenance carries its download time and is `uncertain` until an original
+ * with a dated EXIF block proves otherwise. Previews never carry EXIF, so provenance is the only
+ * signal until the original arrives.
  */
-export function resolveCapture(m: Pick<Metadata, 'capturedAt' | 'capturedTz' | 'exifHasOffset'>, osCreatedAt: Date | null, uploadedAt: Date, isUtility: boolean, isVideo: boolean) {
+export function resolveCapture(m: Pick<Metadata, 'capturedAt' | 'capturedTz' | 'exifHasOffset'>, osCreatedAt: Date | null, uploadedAt: Date, origin: Origin) {
   let capturedAt: Date, tz: string | null = null, uncertain = false;
+  const trusted = origin === 'camera';
   if (m.capturedAt && m.exifHasOffset) {
     capturedAt = m.capturedAt; tz = m.capturedTz;
     if (osCreatedAt && Math.abs(osCreatedAt.getTime() - capturedAt.getTime()) > 24 * 3600_000) uncertain = true;
@@ -63,13 +69,20 @@ export function resolveCapture(m: Pick<Metadata, 'capturedAt' | 'capturedTz' | '
         const a = Math.abs(diffMin);
         tz = `${sign}${String(Math.floor(a / 60)).padStart(2, '0')}:${String(a % 60).padStart(2, '0')}`;
       } else uncertain = true;
-    } else if (!isUtility && !isVideo) uncertain = true; // received media (messenger strips EXIF)
+    }
+    if (!trusted) uncertain = true;
   } else if (m.capturedAt) {
-    capturedAt = m.capturedAt; uncertain = true;
+    capturedAt = m.capturedAt; uncertain = !trusted;
   } else {
     capturedAt = uploadedAt; uncertain = true;
   }
   return { capturedAt, tz, uncertain };
+}
+
+/** One blob, several assets (cross-user dedupe): the best-graded copy decides trust. */
+export function bestOrigin(origins: readonly Origin[]): Origin {
+  const rank: Origin[] = ['camera', 'edited', 'unknown', 'received', 'screenshot'];
+  return rank.find((o) => origins.includes(o)) ?? 'unknown';
 }
 
 export async function derive(ctx: Ctx, payload: DerivePayload): Promise<void> {
@@ -94,24 +107,26 @@ export async function derive(ctx: Ctx, payload: DerivePayload): Promise<void> {
 
   const blobSha = firstDerive ? sha : Buffer.from(blob.sha256!).toString('hex');
   const g = blob.groupId;
-  const assetRows = await db.select({ id: assets.id, localCreatedAt: assets.localCreatedAt }).from(assets).where(eq(assets.blobId, blob.id)).orderBy(assets.createdAt);
+  const assetRows = await db.select({ id: assets.id, localCreatedAt: assets.localCreatedAt, origin: assets.origin, captureHint: assets.captureHint }).from(assets).where(eq(assets.blobId, blob.id)).orderBy(assets.createdAt);
   const osCreatedAt = assetRows[0]?.localCreatedAt ?? null;
+  const origin = bestOrigin(assetRows.map((a) => a.origin));
+  const hint = assetRows.find((a) => a.captureHint)?.captureHint ?? null;
 
   let meta: Metadata | null = null;
   try { meta = await readMetadata(local); } catch (e) { if (payload.kind === 'preview' && !isVideo) throw e; log.warn({ err: e, blobId: blob.id }, 'derive: could not decode original; keeping existing preview'); }
 
   const update: Partial<typeof blobs.$inferInsert> = {};
   if (meta) {
-    const utility = !isVideo && looksLikeScreenshot(meta);
-    const reencoded = !isVideo && !utility && looksReencoded(meta);
-    // a phone-made poster frame carries no EXIF, so a video never counts as "received media" here
-    const t = resolveCapture(meta, osCreatedAt, blob.createdAt, utility, isVideo);
+    const utility = origin === 'screenshot' || (!isVideo && looksLikeScreenshot(meta));
+    // the messenger re-encode signature only means something on an original: every phone preview is a 1600 px JPEG without EXIF
+    const reencoded = payload.kind === 'original' && !isVideo && !utility && looksReencoded(meta);
+    const t = resolveCapture(meta, osCreatedAt, blob.createdAt, origin);
     // originals carry full EXIF: refresh metadata; a preview only sets what it knows
     Object.assign(update, {
       width: meta.width, height: meta.height,
       capturedAt: t.capturedAt, capturedTz: t.tz ?? blob.capturedTz,
       lat: meta.lat ?? blob.lat, lon: meta.lon ?? blob.lon,
-      cameraMake: meta.cameraMake ?? blob.cameraMake, cameraModel: meta.cameraModel ?? blob.cameraModel,
+      cameraMake: meta.cameraMake ?? hint?.make ?? blob.cameraMake, cameraModel: meta.cameraModel ?? hint?.model ?? blob.cameraModel,
       exif: meta.exif ?? blob.exif,
       // §7.4: messenger re-encodes get no vote on boundaries
       timeUncertain: t.uncertain || reencoded,

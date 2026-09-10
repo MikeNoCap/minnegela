@@ -1,10 +1,12 @@
 import { pgTable, uuid, text, timestamp, jsonb, integer, bigint, real, doublePrecision, boolean, vector, primaryKey, index, unique } from 'drizzle-orm/pg-core';
 import { bytea, bit64 } from './custom.js';
+import type { CaptureHint } from '@minnegela/shared';
 import { users } from './auth.js';
 import { groups, devices } from './tenancy.js';
 
 export type Tag = { tag: string; score: number };
 export type Quality = { sharpness?: number; exposure?: number; aesthetic?: number };
+export const ORIGIN_VALUES = ['camera', 'received', 'screenshot', 'edited', 'unknown'] as const;
 
 export const blobs = pgTable('blobs', {
   id: uuid('id').primaryKey().defaultRandom(),
@@ -56,13 +58,16 @@ export const assets = pgTable('assets', {
   localModifiedAt: timestamp('local_modified_at', { withTimezone: true }),
   isFavorite: boolean('is_favorite').notNull().default(false),
   visibility: text('visibility', { enum: ['group', 'hidden'] }).notNull().default('group'),
+  /** §7.4 provenance grade; only `camera` votes on boundaries and grants presence */
+  origin: text('origin', { enum: ORIGIN_VALUES }).notNull().default('unknown'),
+  captureHint: jsonb('capture_hint').$type<CaptureHint>(),
   excludedReason: text('excluded_reason'),
   personIds: integer('person_ids').array().notNull().default([]),
   previewUploadedAt: timestamp('preview_uploaded_at', { withTimezone: true }),
   originalUploadedAt: timestamp('original_uploaded_at', { withTimezone: true }),
   deletedAt: timestamp('deleted_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [unique().on(t.deviceId, t.localId), index('assets_group_owner').on(t.groupId, t.ownerUserId), index('assets_blob').on(t.blobId)]);
+}, (t) => [unique().on(t.deviceId, t.localId), index('assets_group_owner').on(t.groupId, t.ownerUserId), index('assets_blob').on(t.blobId), index('assets_group_origin').on(t.groupId, t.origin)]);
 
 export const derivatives = pgTable('derivatives', {
   blobId: uuid('blob_id').notNull().references(() => blobs.id, { onDelete: 'cascade' }),

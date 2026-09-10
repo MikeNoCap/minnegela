@@ -6,14 +6,15 @@ import type { LocalAsset } from '@/db/types';
 const row: LocalAsset = {
   localId: 'ph-1', md5: null, size: 2_345_678, mime: 'image/heic', filename: 'IMG_0007.HEIC', isVideo: false,
   createdAt: '2026-03-14T21:30:00.000+01:00', modifiedAt: null, lat: 59.9227, lon: 10.759, w: 4032, h: 3024, dur: null,
-  albumIds: ['x'], albumNames: ['Party'], isScreenshot: false, uri: 'ph://1', serverAssetId: null, state: 'new', lastError: null, attempts: 0, updatedAt: '',
+  albumIds: ['x'], albumNames: ['Party'], isScreenshot: false, uri: 'ph://1', path: null, exifHint: { make: 'Apple', model: 'iPhone 15' }, serverAssetId: null, state: 'new', lastError: null, attempts: 0, updatedAt: '',
 };
 
 describe('manifest mapping (§13.1)', () => {
   it('produces an item that satisfies the shared schema, with gps and albums', () => {
     const item = toManifestItem(row, 'c'.repeat(32));
     expect(ManifestItem.safeParse(item).success).toBe(true);
-    expect(item).toMatchObject({ localId: 'ph-1', md5: 'c'.repeat(32), size: 2_345_678, gps: { lat: 59.9227, lon: 10.759 }, albums: ['Party'], w: 4032 });
+    expect(item).toMatchObject({ localId: 'ph-1', md5: 'c'.repeat(32), size: 2_345_678, gps: { lat: 59.9227, lon: 10.759 }, albums: ['Party'], w: 4032, exif: { make: 'Apple', model: 'iPhone 15' } });
+    expect(item.path).toBeUndefined();
   });
   it('omits md5 on Android-style rows and gps when missing', () => {
     const item = toManifestItem({ ...row, lat: null, lon: null }, null);

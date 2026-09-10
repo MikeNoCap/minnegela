@@ -17,6 +17,9 @@ export function toManifestItem(a: LocalAsset, md5?: string | null): ManifestItem
     albums: a.albumNames,
     filename: a.filename,
     isFavorite: false,
+    path: a.path ?? undefined,
+    exif: a.exifHint ?? undefined,
+    isScreenshot: a.isScreenshot || undefined,
   });
 }
 

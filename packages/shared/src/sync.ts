@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { CaptureHint } from './provenance.js';
 
 /** §13.1 ingest protocol. Sent by the phone (and the folder importer) in batches of ≤ 200. */
 export const ManifestItem = z.object({
@@ -15,6 +16,12 @@ export const ManifestItem = z.object({
   albums: z.array(z.string()).default([]),
   filename: z.string().max(512).optional(),
   isFavorite: z.boolean().default(false),
+  /** Device path when the platform exposes one (Android file path, importer-relative path); provenance signal (§7.4). */
+  path: z.string().max(1024).optional(),
+  /** EXIF summary read on the device; lets the server grade provenance before any original arrives. */
+  exif: CaptureHint.optional(),
+  /** Platform screenshot flag (iOS media subtype). */
+  isScreenshot: z.boolean().optional(),
   /** Optional client hints, reserved for on-device pre-filtering (§4.3). Ignored by the server today. */
   hints: z.record(z.string(), z.unknown()).optional(),
 });

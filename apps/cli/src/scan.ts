@@ -3,7 +3,7 @@ import { createReadStream } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
 import exifr from 'exifr';
-import type { ManifestItem } from '@minnegela/shared';
+import type { ManifestItem, CaptureHint } from '@minnegela/shared';
 
 export const IMAGE_EXT: Record<string, string> = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.heic': 'image/heic', '.heif': 'image/heif', '.webp': 'image/webp' };
 export const VIDEO_EXT: Record<string, string> = { '.mp4': 'video/mp4', '.mov': 'video/quicktime', '.m4v': 'video/mp4', '.webm': 'video/webm' };
@@ -40,15 +40,19 @@ export function hashFile(file: string, algo: 'md5' | 'sha256'): Promise<string> 
   });
 }
 
-export type Probe = { createdAt: Date; fromExif: boolean; gps?: { lat: number; lon: number }; w?: number; h?: number };
+export type Probe = { createdAt: Date; fromExif: boolean; gps?: { lat: number; lon: number }; w?: number; h?: number; exif?: CaptureHint };
 
 /** Capture time and position for the manifest. Falls back to mtime when the file carries no date. */
 export async function probeFile(f: ScannedFile): Promise<Probe> {
-  let createdAt = f.mtime, fromExif = false, gps: Probe['gps'], w: number | undefined, h: number | undefined;
+  let createdAt = f.mtime, fromExif = false, gps: Probe['gps'], w: number | undefined, h: number | undefined, exif: CaptureHint | undefined;
   if (!f.isVideo) {
     try {
-      const ex = await exifr.parse(f.abs, { pick: ['DateTimeOriginal', 'CreateDate', 'OffsetTimeOriginal', 'ExifImageWidth', 'ExifImageHeight', 'Orientation'], gps: true, reviveValues: true, translateValues: false });
+      const ex = await exifr.parse(f.abs, { pick: ['DateTimeOriginal', 'CreateDate', 'OffsetTimeOriginal', 'ExifImageWidth', 'ExifImageHeight', 'Orientation', 'Make', 'Model', 'Software'], gps: true, reviveValues: true, translateValues: false });
       const raw = ex?.DateTimeOriginal ?? ex?.CreateDate;
+      const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 100) : undefined);
+      if (ex && (str(ex.Make) || str(ex.Model) || raw instanceof Date)) {
+        exif = { make: str(ex.Make), model: str(ex.Model), software: str(ex.Software), dateTimeOriginal: raw instanceof Date ? raw.toISOString() : undefined, offset: str(ex.OffsetTimeOriginal) };
+      }
       if (raw instanceof Date && !Number.isNaN(raw.getTime())) {
         // exifr gives the wall clock as a local Date; honour an explicit EXIF offset when present
         const wall = Date.UTC(raw.getFullYear(), raw.getMonth(), raw.getDate(), raw.getHours(), raw.getMinutes(), raw.getSeconds());
@@ -66,7 +70,7 @@ export async function probeFile(f: ScannedFile): Promise<Probe> {
       try { const sharp = (await import('sharp')).default; const m = await sharp(f.abs).metadata(); const swap = (m.orientation ?? 1) >= 5; w = swap ? m.height : m.width; h = swap ? m.width : m.height; } catch { /* undecodable (HEIC without libheif) */ }
     }
   }
-  return { createdAt, fromExif, gps, w, h };
+  return { createdAt, fromExif, gps, w, h, exif };
 }
 
 export function toManifestItem(f: ScannedFile, md5: string, p: Probe): ManifestItem {
@@ -76,5 +80,6 @@ export function toManifestItem(f: ScannedFile, md5: string, p: Probe): ManifestI
     gps: p.gps, w: p.w, h: p.h,
     albums: f.rel.includes('/') ? [f.rel.split('/')[0]!] : [],
     filename: path.basename(f.rel), isFavorite: false,
+    path: f.rel, exif: p.exif,
   };
 }

@@ -233,3 +233,35 @@ describe('presign batching and rate limits', () => {
     expect(s.originals).toBe(2);
   });
 });
+
+describe('provenance regrade (§7.4)', () => {
+  it('an upgraded app re-walks the library once and re-manifests what the server already has', async () => {
+    const { PROVENANCE_VERSION } = await import('@/sync/runner');
+    const lib = new FakeLibrary([asset(1), asset(2)]);
+    const { deps, db, api } = makeDeps({ library: lib });
+    // an install that synced before provenance existed: rows known to the server, no signals, no version marker
+    await db.upsertLocal([asset(1), asset(2)]);
+    await db.setState('L1', { state: 'preview_uploaded', serverAssetId: 'A1' });
+    await db.setState('L2', { state: 'skipped', serverAssetId: 'A2' });
+    await db.setSyncState(SYNC_KEYS.enumerateHighWater, String(Date.now()));
+    await run(deps);
+    expect(await db.getSyncState(SYNC_KEYS.provenanceWalk)).toBe('done');
+    expect(await db.getSyncState(SYNC_KEYS.provenanceVersion)).toBe(PROVENANCE_VERSION);
+    expect(api.manifests).toHaveLength(1);
+    expect(api.manifests[0]!.assets.map((a) => a.localId).sort()).toEqual(['L1', 'L2']);
+    // the regrade answer did not reset states (the pass then carried L1 on to its original as usual)
+    expect((await db.get('L1'))!.state).toBe('original_uploaded');
+    expect((await db.get('L2'))!.state).toBe('skipped');
+    await run(deps);
+    expect(api.manifests).toHaveLength(1);
+  });
+
+  it('a fresh install never regrades', async () => {
+    const { PROVENANCE_VERSION } = await import('@/sync/runner');
+    const { deps, db, api } = makeDeps({ library: new FakeLibrary([asset(1)]) });
+    await run(deps);
+    expect(await db.getSyncState(SYNC_KEYS.provenanceVersion)).toBe(PROVENANCE_VERSION);
+    expect(await db.getSyncState(SYNC_KEYS.provenanceWalk)).toBeNull();
+    expect(api.manifests).toHaveLength(1);
+  });
+});

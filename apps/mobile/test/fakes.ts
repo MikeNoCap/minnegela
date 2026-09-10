@@ -29,6 +29,10 @@ export class MemoryDb implements LocalDb {
     for (const g of gone) g.state = 'deleted';
     return gone.filter((g) => g.serverAssetId);
   }
+  async listRegrade(limit: number) {
+    return [...this.rows.values()].filter((r) => r.serverAssetId && (r as LocalAsset & { provenanceV?: number }).provenanceV !== 1 && ['manifested', 'preview_uploaded', 'original_uploaded', 'skipped'].includes(r.state)).slice(0, limit);
+  }
+  async markRegraded(ids: string[]) { for (const id of ids) Object.assign(this.rows.get(id)!, { provenanceV: 1 }); }
   async counts(): Promise<Counts> {
     const c = { new: 0, excluded: 0, manifested: 0, preview_uploaded: 0, original_uploaded: 0, skipped: 0, deleted: 0, failed: 0, total: 0 } as Counts;
     for (const r of this.rows.values()) { c[r.state]++; c.total++; }
@@ -42,7 +46,7 @@ export class MemoryDb implements LocalDb {
 export const asset = (i: number, extra: Partial<LibraryAsset> = {}): LibraryAsset => ({
   localId: `L${i}`, md5: null, size: 1000 + i, mime: 'image/jpeg', filename: `IMG_${i}.jpg`, isVideo: false,
   createdAt: new Date(Date.UTC(2026, 2, 14, 20, i)).toISOString(), modifiedAt: null, lat: null, lon: null, w: 4000, h: 3000, dur: null,
-  albumIds: [], albumNames: [], isScreenshot: false, uri: `ph://${i}`, ...extra,
+  albumIds: [], albumNames: [], isScreenshot: false, uri: `ph://${i}`, path: null, exifHint: null, ...extra,
 });
 
 export class FakeLibrary implements Library {

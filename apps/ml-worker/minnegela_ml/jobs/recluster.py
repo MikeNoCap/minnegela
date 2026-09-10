@@ -72,7 +72,7 @@ def _load_items(conn, group_id: str, lo, hi) -> tuple[list[Item], dict[str, list
         params += [lo, hi]
     rows = conn.execute(
         f"""
-        select a.id as asset_id, a.blob_id, a.owner_user_id, a.person_ids,
+        select a.id as asset_id, a.blob_id, a.owner_user_id, a.person_ids, a.origin,
                extract(epoch from b.captured_at + make_interval(secs => d.clock_offset_s)) as t,
                b.lat, b.lon, b.clip_emb, b.n_faces, b.time_uncertain, b.duration_ms, b.tags
         from assets a join blobs b on b.id = a.blob_id join devices d on d.id = a.device_id
@@ -95,7 +95,7 @@ def _load_items(conn, group_id: str, lo, hi) -> tuple[list[Item], dict[str, list
             id=str(r["asset_id"]), blob_id=bid, t=float(r["t"]), contrib=str(r["owner_user_id"]),
             lat=r["lat"], lon=r["lon"], people=frozenset(int(p) for p in (r["person_ids"] or [])),
             emb=emb, n_faces=int(r["n_faces"] or 0), time_uncertain=bool(r["time_uncertain"]),
-            is_video=r["duration_ms"] is not None, tags=tags,
+            is_video=r["duration_ms"] is not None, tags=tags, origin=str(r["origin"] or "unknown"),
         ))
     return items, assets_of_blob
 

@@ -1,4 +1,5 @@
 import type { LibraryAsset } from './types';
+import { exifHintFrom } from './provenance';
 
 /**
  * Enrollment runs during onboarding, before the first library walk, so a picked reference photo
@@ -40,6 +41,6 @@ export function pickToLocalAsset(p: PickedImage, id: string, uri: string, size: 
     localId: id, md5: null, size, mime: p.mimeType || 'image/jpeg', filename, isVideo: false,
     createdAt: exifDate(p.exif) ?? fallbackCreatedAt, modifiedAt: fallbackCreatedAt,
     lat: null, lon: null, w: p.width || null, h: p.height || null, dur: null,
-    albumIds: [], albumNames: [], isScreenshot: false, uri,
+    albumIds: [], albumNames: [], isScreenshot: false, uri, path: null, exifHint: exifHintFrom(p.exif as Record<string, unknown> | undefined),
   };
 }

@@ -7,10 +7,11 @@ import * as Network from 'expo-network';
 import * as Battery from 'expo-battery';
 import { PREVIEW } from '@minnegela/shared';
 import type { UploadTarget } from '@minnegela/shared';
-import type { LocalAsset } from '@/db/types';
+import type { LocalAsset, LocalDb } from '@/db/types';
 import type { Library, LibraryAsset, Uploader, PreparedUpload } from './types';
 import type { Conditions } from './policy';
 import { Sha256, base64ToBytes } from './hash';
+import { pathFrom, exifHintFrom } from './provenance';
 
 const mimeFor = (filename: string, isVideo: boolean): string => {
   const ext = filename.split('.').pop()?.toLowerCase() ?? '';
@@ -31,6 +32,44 @@ export async function albumMap(): Promise<Map<string, string>> {
   return byId;
 }
 
+/** One library asset as the index stores it (`info` adds GPS and the readable local uri when available). */
+function toLibraryAsset(a: MediaLibrary.Asset, info: MediaLibrary.AssetInfo | null, albums: Map<string, string>): LibraryAsset {
+  const isVideo = a.mediaType === 'video';
+  const created = new Date(a.creationTime || a.modificationTime || Date.now());
+  const modified = new Date(a.modificationTime || a.creationTime || Date.now());
+  return {
+    localId: a.id,
+    md5: null,
+    size: 0,   // filled by md5()/getInfoAsync at manifest time
+    mime: mimeFor(a.filename, isVideo),
+    filename: a.filename,
+    isVideo,
+    createdAt: created.toISOString(),
+    modifiedAt: modified.toISOString(),
+    lat: info?.location?.latitude ?? null,
+    lon: info?.location?.longitude ?? null,
+    w: a.width || null,
+    h: a.height || null,
+    dur: isVideo ? a.duration || null : null,
+    albumIds: a.albumId ? [a.albumId] : [],
+    albumNames: a.albumId ? [albums.get(a.albumId) ?? a.albumId] : [],
+    isScreenshot: (a.mediaSubtypes ?? []).includes('screenshot'),
+    uri: info?.localUri ?? a.uri,
+    path: pathFrom(info?.localUri ?? a.uri),
+    exifHint: exifHintFrom(info?.exif as Record<string, unknown> | undefined),
+  };
+}
+
+/**
+ * Index one library asset by id ahead of the walk. The iOS picker names the PHAsset it returned,
+ * but during onboarding no walk has run yet, so without a row the sync could not prioritise the
+ * reference photo. The row is identical to what the walk would write, so nothing is doubled.
+ */
+export async function indexLibraryAsset(db: Pick<LocalDb, 'upsertLocal'>, id: string): Promise<void> {
+  const info = await MediaLibrary.getAssetInfoAsync(id, { shouldDownloadFromNetwork: false });
+  await db.upsertLocal([{ ...toLibraryAsset(info, info, await albumMap()), state: 'new' }]);
+}
+
 /** expo-media-library (legacy paged API) as a Library. */
 export const mediaLibrary: Library = {
   async page({ after, first, includeVideos }) {
@@ -49,28 +88,7 @@ export const mediaLibrary: Library = {
       // getAssetInfoAsync gives GPS, local uri and (iOS) EXIF; it is a few ms per asset.
       let info: MediaLibrary.AssetInfo | null = null;
       try { info = await MediaLibrary.getAssetInfoAsync(a, { shouldDownloadFromNetwork: false }); } catch { info = null; }
-      const isVideo = a.mediaType === 'video';
-      const created = new Date(a.creationTime || a.modificationTime || Date.now());
-      const modified = new Date(a.modificationTime || a.creationTime || Date.now());
-      assets.push({
-        localId: a.id,
-        md5: null,
-        size: 0,   // filled by md5()/getInfoAsync at manifest time
-        mime: mimeFor(a.filename, isVideo),
-        filename: a.filename,
-        isVideo,
-        createdAt: created.toISOString(),
-        modifiedAt: modified.toISOString(),
-        lat: info?.location?.latitude ?? null,
-        lon: info?.location?.longitude ?? null,
-        w: a.width || null,
-        h: a.height || null,
-        dur: isVideo ? a.duration || null : null,
-        albumIds: a.albumId ? [a.albumId] : [],
-        albumNames: a.albumId ? [albums.get(a.albumId) ?? a.albumId] : [],
-        isScreenshot: (a.mediaSubtypes ?? []).includes('screenshot'),
-        uri: info?.localUri ?? a.uri,
-      });
+      assets.push(toLibraryAsset(a, info, albums));
     }
     return { assets, endCursor: res.endCursor ?? null, hasNextPage: res.hasNextPage };
   },
@@ -112,6 +130,8 @@ export async function sha256File(uri: string, size: number): Promise<string> {
 }
 
 const cacheDir = () => `${FS.cacheDirectory ?? ''}minnegela/`;
+/** Files the app owns (cache, documents): readable by the background upload session as they are. */
+const inAppContainer = (uri: string) => [FS.cacheDirectory, FS.documentDirectory].some((d) => !!d && uri.startsWith(d));
 async function ensureCache() { try { await FS.makeDirectoryAsync(cacheDir(), { intermediates: true }); } catch { /* exists */ } }
 
 /** Previews and originals via expo-image-manipulator / expo-video-thumbnails / background URLSession uploads. */
@@ -133,11 +153,18 @@ export const expoUploader: Uploader = {
   async prepareOriginal(a: LocalAsset): Promise<PreparedUpload> {
     let uri = a.uri;
     let cleanup = async () => {};
-    if (!uri.startsWith('file://')) {
-      // ph:// and content:// need a file copy for the background uploader.
+    // ph:// and content:// always need a file copy. On iOS the Photos library's own file paths do
+    // too: the background upload session runs in another process that cannot read them.
+    if (Platform.OS === 'ios' ? !inAppContainer(uri) : !uri.startsWith('file://')) {
       await ensureCache();
       const dest = `${cacheDir()}orig-${a.localId.replace(/[^a-zA-Z0-9]/g, '_')}-${a.filename}`;
-      await FS.copyAsync({ from: uri, to: dest });
+      try {
+        await FS.copyAsync({ from: uri, to: dest });
+      } catch (e) {
+        // iOS: the localUri path may be unreadable; the asset-library handler can always export the PHAsset.
+        if (Platform.OS !== 'ios' || uri.startsWith('ph://')) throw e;
+        await FS.copyAsync({ from: `ph://${a.localId}`, to: dest });
+      }
       uri = dest;
       cleanup = async () => { try { await FS.deleteAsync(dest, { idempotent: true }); } catch { /* ignore */ } };
     }

@@ -14,6 +14,10 @@ export const SYNC_KEYS = {
   lastSyncAt: 'sync.lastAt',
   lastError: 'sync.lastError',
   lastSummary: 'sync.lastSummary',
+  /** §7.4: rows known to the server have been re-manifested with provenance signals up to this version. */
+  provenanceVersion: 'provenance.version',
+  /** 'started' while the one-off full re-walk that collects those signals runs, 'done' after. */
+  provenanceWalk: 'provenance.walk',
 } as const;
 
 const RECONCILE_EVERY_MS = 7 * 24 * 3600_000;
@@ -45,6 +49,8 @@ export async function runPool<T>(items: T[], n: number, fn: (item: T) => Promise
 }
 
 type EnumerateResume = { after: string | null; newest: number; highWater: number };
+/** Bump when the manifest gains provenance signals the server should regrade existing assets with. */
+export const PROVENANCE_VERSION = '1';
 const modifiedMs = (a: { modifiedAt: string | null; createdAt: string }) => Date.parse(a.modifiedAt ?? a.createdAt);
 
 /** Forget the enumeration position so the next pass walks the whole library again (rules changed). */
@@ -87,6 +93,20 @@ async function runSyncInner(deps: SyncDeps, opts: SyncOpts): Promise<SyncSummary
     // walk. The query never changes mid-walk (Android pages by row offset), and the mark only moves
     // once a walk finishes; an interrupted walk stores its position and resumes next pass.
     progress({ phase: 'enumerate', done: 0, total: 0 });
+    // §7.4 one-off: an app that learned to read provenance signals walks the whole library again so
+    // every row carries them before the server is asked to regrade
+    const provenanceDone = (await deps.db.getSyncState(SYNC_KEYS.provenanceVersion)) === PROVENANCE_VERSION;
+    let provenanceWalk = await deps.db.getSyncState(SYNC_KEYS.provenanceWalk);
+    if (!provenanceDone && provenanceWalk === null) {
+      if ((await deps.db.listRegrade(1)).length) {
+        await resetEnumeration(deps.db);
+        provenanceWalk = 'started';
+        await deps.db.setSyncState(SYNC_KEYS.provenanceWalk, provenanceWalk);
+      } else {
+        // nothing the server knows yet (fresh install): every row it will ever see carries the signals
+        await deps.db.setSyncState(SYNC_KEYS.provenanceVersion, PROVENANCE_VERSION);
+      }
+    }
     const highWater = Number((await deps.db.getSyncState(SYNC_KEYS.enumerateHighWater)) ?? 0);
     const resumeRaw = await deps.db.getSyncState(SYNC_KEYS.enumerateResume);
     let resume: EnumerateResume | null = null;
@@ -115,6 +135,7 @@ async function runSyncInner(deps: SyncDeps, opts: SyncOpts): Promise<SyncSummary
     if (walkDone) {
       if (newest > highWater) await deps.db.setSyncState(SYNC_KEYS.enumerateHighWater, String(newest));
       if (resume) await deps.db.setSyncState(SYNC_KEYS.enumerateResume, null);
+      if (provenanceWalk === 'started') { provenanceWalk = 'done'; await deps.db.setSyncState(SYNC_KEYS.provenanceWalk, provenanceWalk); }
     } else {
       sum.stoppedEarly = true;
       await deps.db.setSyncState(SYNC_KEYS.enumerateResume, JSON.stringify({ after, newest, highWater } satisfies EnumerateResume));
@@ -163,6 +184,22 @@ async function runSyncInner(deps: SyncDeps, opts: SyncOpts): Promise<SyncSummary
             sum.manifested++;
           }
         } catch (e) { fail(e); }
+      }
+    }
+
+    // 3b. regrade (§7.4, one-off after the re-walk): tell the server what the phone now knows about
+    // assets it already has; the server regrades origin and re-places the blob. No state changes here.
+    if (!provenanceDone && provenanceWalk === 'done') {
+      for (;;) {
+        if (over()) { sum.stoppedEarly = true; break; }
+        const rows = await deps.db.listRegrade(200);
+        if (!rows.length) { await deps.db.setSyncState(SYNC_KEYS.provenanceVersion, PROVENANCE_VERSION); break; }
+        progress({ phase: 'manifest', done: 0, total: rows.length });
+        try {
+          await deps.api.manifest(groupId, { deviceId, assets: rows.map((a) => toManifestItem(a, a.md5)) });
+          await deps.db.markRegraded(rows.map((a) => a.localId));
+          sum.manifested += rows.length;
+        } catch (e) { fail(e); break; }
       }
     }
 

@@ -1,18 +1,18 @@
 import * as SQLite from 'expo-sqlite';
 import type { LocalAsset, LocalDb, LocalState, Counts } from './types';
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 const STATES: LocalState[] = ['new', 'excluded', 'manifested', 'preview_uploaded', 'original_uploaded', 'skipped', 'deleted', 'failed'];
 
 type Row = {
   local_id: string; md5: string | null; size: number; mime: string; filename: string; is_video: number; created_at: string; modified_at: string | null;
   lat: number | null; lon: number | null; w: number | null; h: number | null; dur: number | null; album_ids: string; album_names: string; is_screenshot: number;
-  uri: string; server_asset_id: string | null; state: LocalState; last_error: string | null; attempts: number; updated_at: string;
+  uri: string; path: string | null; exif_hint: string | null; server_asset_id: string | null; state: LocalState; last_error: string | null; attempts: number; updated_at: string;
 };
 const fromRow = (r: Row): LocalAsset => ({
   localId: r.local_id, md5: r.md5, size: r.size, mime: r.mime, filename: r.filename, isVideo: !!r.is_video, createdAt: r.created_at, modifiedAt: r.modified_at,
   lat: r.lat, lon: r.lon, w: r.w, h: r.h, dur: r.dur, albumIds: JSON.parse(r.album_ids || '[]'), albumNames: JSON.parse(r.album_names || '[]'), isScreenshot: !!r.is_screenshot,
-  uri: r.uri, serverAssetId: r.server_asset_id, state: r.state, lastError: r.last_error, attempts: r.attempts, updatedAt: r.updated_at,
+  uri: r.uri, path: r.path, exifHint: r.exif_hint ? (JSON.parse(r.exif_hint) as LocalAsset['exifHint']) : null, serverAssetId: r.server_asset_id, state: r.state, lastError: r.last_error, attempts: r.attempts, updatedAt: r.updated_at,
 });
 
 export async function openLocalDb(name = 'minnegela.db'): Promise<LocalDb> {
@@ -24,12 +24,20 @@ export async function openLocalDb(name = 'minnegela.db'): Promise<LocalDb> {
         local_id text primary key, md5 text, size integer not null, mime text not null, filename text not null, is_video integer not null default 0,
         created_at text not null, modified_at text, lat real, lon real, w integer, h integer, dur real,
         album_ids text not null default '[]', album_names text not null default '[]', is_screenshot integer not null default 0,
-        uri text not null, server_asset_id text, state text not null default 'new', last_error text, attempts integer not null default 0,
+        uri text not null, path text, exif_hint text, provenance_v integer not null default 0,
+        server_asset_id text, state text not null default 'new', last_error text, attempts integer not null default 0,
         updated_at text not null
       );
       create index if not exists local_assets_state on local_assets(state, created_at);
       create table if not exists sync_state (key text primary key, value text);
       pragma user_version = ${SCHEMA_VERSION};`);
+  } else if (v < 2) {
+    // §7.4 provenance signals; provenance_v marks rows re-manifested with them
+    await db.execAsync(`
+      alter table local_assets add column path text;
+      alter table local_assets add column exif_hint text;
+      alter table local_assets add column provenance_v integer not null default 0;
+      pragma user_version = 2;`);
   }
   return new SqliteLocalDb(db);
 }
@@ -52,13 +60,13 @@ class SqliteLocalDb implements LocalDb {
     await this.transaction(async () => {
       for (const r of rows) {
         await this.db.runAsync(
-          `insert into local_assets (local_id, md5, size, mime, filename, is_video, created_at, modified_at, lat, lon, w, h, dur, album_ids, album_names, is_screenshot, uri, state, updated_at)
-           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `insert into local_assets (local_id, md5, size, mime, filename, is_video, created_at, modified_at, lat, lon, w, h, dur, album_ids, album_names, is_screenshot, uri, path, exif_hint, state, updated_at)
+           values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            on conflict(local_id) do update set size = excluded.size, modified_at = excluded.modified_at, album_ids = excluded.album_ids, album_names = excluded.album_names,
-             uri = excluded.uri, updated_at = excluded.updated_at,
+             uri = excluded.uri, path = excluded.path, exif_hint = coalesce(excluded.exif_hint, local_assets.exif_hint), updated_at = excluded.updated_at,
              state = case when local_assets.state in ('new','excluded') then excluded.state else local_assets.state end`,
           [r.localId, r.md5, r.size, r.mime, r.filename, r.isVideo ? 1 : 0, r.createdAt, r.modifiedAt, r.lat, r.lon, r.w, r.h, r.dur,
-            JSON.stringify(r.albumIds), JSON.stringify(r.albumNames), r.isScreenshot ? 1 : 0, r.uri, r.state ?? 'new', now]);
+            JSON.stringify(r.albumIds), JSON.stringify(r.albumNames), r.isScreenshot ? 1 : 0, r.uri, r.path, r.exifHint ? JSON.stringify(r.exifHint) : null, r.state ?? 'new', now]);
       }
     });
   }
@@ -100,6 +108,14 @@ class SqliteLocalDb implements LocalDb {
       for (const r of rows) await this.db.runAsync("update local_assets set state = 'deleted', updated_at = ? where local_id = ?", [new Date().toISOString(), r.localId]);
     });
     return rows.filter((r) => r.serverAssetId);
+  }
+  async listRegrade(limit: number) {
+    return (await this.db.getAllAsync<Row>("select * from local_assets where server_asset_id is not null and provenance_v < 1 and state in ('manifested','preview_uploaded','original_uploaded','skipped') order by created_at desc limit ?", [limit])).map(fromRow);
+  }
+  async markRegraded(localIds: string[]) {
+    if (!localIds.length) return;
+    const q = localIds.map(() => '?').join(',');
+    await this.db.runAsync(`update local_assets set provenance_v = 1 where local_id in (${q})`, localIds);
   }
   async counts(): Promise<Counts> {
     const rows = await this.db.getAllAsync<{ state: LocalState; n: number }>('select state, count(*) as n from local_assets group by state');

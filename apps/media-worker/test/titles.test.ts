@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { autoTitle, autoTitles, cleanTag, listNames, voteTags, dominantTag, interestScore, routineScore } from '../src/jobs/titles.js';
-import { resolveCapture } from '../src/jobs/derive.js';
+import { resolveCapture, bestOrigin } from '../src/jobs/derive.js';
 import { classifyPair } from '../src/jobs/dedupe.js';
 import { looksLikeScreenshot } from '../src/metadata.js';
 
@@ -107,21 +107,31 @@ describe('interest (§9.11)', () => {
 describe('resolveCapture (§8.2)', () => {
   const up = new Date('2026-04-01T00:00:00Z');
   it('prefers EXIF with an explicit offset', () => {
-    const r = resolveCapture({ capturedAt: new Date('2026-03-14T20:30:00Z'), capturedTz: '+01:00', exifHasOffset: true }, new Date('2026-03-14T20:30:05Z'), up, false, false);
+    const r = resolveCapture({ capturedAt: new Date('2026-03-14T20:30:00Z'), capturedTz: '+01:00', exifHasOffset: true }, new Date('2026-03-14T20:30:05Z'), up, 'received');
     expect(r.capturedAt.toISOString()).toBe('2026-03-14T20:30:00.000Z'); expect(r.tz).toBe('+01:00'); expect(r.uncertain).toBe(false);
   });
   it('uses the OS timestamp and infers the zone when EXIF has no offset', () => {
-    const r = resolveCapture({ capturedAt: new Date('2026-03-14T21:30:00Z'), capturedTz: null, exifHasOffset: false }, new Date('2026-03-14T20:30:00Z'), up, false, false);
+    const r = resolveCapture({ capturedAt: new Date('2026-03-14T21:30:00Z'), capturedTz: null, exifHasOffset: false }, new Date('2026-03-14T20:30:00Z'), up, 'camera');
     expect(r.capturedAt.toISOString()).toBe('2026-03-14T20:30:00.000Z'); expect(r.tz).toBe('+01:00'); expect(r.uncertain).toBe(false);
   });
-  it('flags received media (no EXIF) as time-uncertain, but not screenshots or videos', () => {
+  it('without EXIF, trust follows provenance (§7.4): camera files are dated by the OS, everything else is uncertain', () => {
     const none = { capturedAt: null, capturedTz: null, exifHasOffset: false };
-    expect(resolveCapture(none, new Date('2026-03-14T20:30:00Z'), up, false, false).uncertain).toBe(true);
-    expect(resolveCapture(none, new Date('2026-03-14T20:30:00Z'), up, true, false).uncertain).toBe(false);
-    expect(resolveCapture(none, new Date('2026-03-14T20:30:00Z'), up, false, true).uncertain).toBe(false);
+    const os = new Date('2026-03-14T20:30:00Z');
+    expect(resolveCapture(none, os, up, 'camera').uncertain).toBe(false);
+    expect(resolveCapture(none, os, up, 'received').uncertain).toBe(true);
+    expect(resolveCapture(none, os, up, 'unknown').uncertain).toBe(true);
+    expect(resolveCapture(none, os, up, 'screenshot').uncertain).toBe(true);
+    expect(resolveCapture(none, null, up, 'camera').uncertain).toBe(true);   // nothing but the upload time
+    // an EXIF wall clock without offset on a received file (AirDrop keeps EXIF) still dates it, but does not make it trusted
+    expect(resolveCapture({ capturedAt: new Date('2026-03-14T21:30:00Z'), capturedTz: null, exifHasOffset: false }, os, up, 'received').uncertain).toBe(true);
+  });
+  it('bestOrigin: the best-graded copy of a blob decides', () => {
+    expect(bestOrigin(['received', 'camera'])).toBe('camera');
+    expect(bestOrigin(['screenshot', 'received'])).toBe('received');
+    expect(bestOrigin([])).toBe('unknown');
   });
   it('flags a > 24 h disagreement and stores the raw EXIF instant (clock offset is applied by recluster)', () => {
-    const r = resolveCapture({ capturedAt: new Date('2026-03-10T20:30:00Z'), capturedTz: '+01:00', exifHasOffset: true }, new Date('2026-03-14T20:30:00Z'), up, false, false);
+    const r = resolveCapture({ capturedAt: new Date('2026-03-10T20:30:00Z'), capturedTz: '+01:00', exifHasOffset: true }, new Date('2026-03-14T20:30:00Z'), up, 'camera');
     expect(r.uncertain).toBe(true); expect(r.capturedAt.toISOString()).toBe('2026-03-10T20:30:00.000Z');
   });
 });

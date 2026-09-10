@@ -32,10 +32,16 @@ class Item:
     time_uncertain: bool = False
     is_video: bool = False
     tags: dict[str, float] = field(default_factory=dict)
+    origin: str = "unknown"       # §7.4 provenance grade of the best asset copy
 
     @property
     def has_gps(self) -> bool:
         return self.lat is not None and self.lon is not None
+
+    @property
+    def trusted(self) -> bool:
+        """May vote on boundaries: the capture time is real (camera-made, or an original with a dated EXIF block)."""
+        return not self.time_uncertain
 
 
 @dataclass
@@ -345,10 +351,57 @@ def _concurrent_split(seg: _Seg) -> list[_Seg]:
     return out
 
 
-def _min_size(seg: _Seg) -> _Seg:
+def _contributor_split(seg: _Seg) -> list[_Seg]:
+    """§7.4: two people photographing at the same time in places `contrib_split_m` apart were not together.
+    Contributors are grouped by the distance between their GPS centroids; a contributor without any GPS
+    stays with the largest group (no evidence either way)."""
+    limit = WBS["contrib_split_m"]
+    cents: dict[str, tuple[float, float]] = {}
+    for c in {it.contrib for it in seg.items}:
+        pts = _gps_array([it for it in seg.items if it.contrib == c])
+        if pts.shape[0]:
+            cents[c] = centroid(pts)
+    if len(cents) < 2:
+        return [seg]
+    parent = {c: c for c in cents}
+
+    def find(c):
+        while parent[c] != c:
+            parent[c] = parent[parent[c]]
+            c = parent[c]
+        return c
+
+    names = sorted(cents)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            if haversine_m(cents[a][0], cents[a][1], cents[b][0], cents[b][1]) <= limit:
+                parent[find(a)] = find(b)
+    groups: dict[str, set[str]] = {}
+    for c in names:
+        groups.setdefault(find(c), set()).add(c)
+    if len(groups) < 2:
+        return [seg]
+    sizes = {k: sum(1 for it in seg.items if it.contrib in v) for k, v in groups.items()}
+    largest = max(sizes, key=sizes.get)
+    out = []
+    for k, members in groups.items():
+        items = [it for it in seg.items if it.contrib in members or (k == largest and it.contrib not in cents)]
+        if items:
+            out.append(_Seg(sorted(items, key=lambda i: i.t), seg.left_boundary, contiguous=False,
+                            uncertain_ids={i.id for i in items} & seg.uncertain_ids))
+    return sorted(out, key=lambda s2: s2.start)
+
+
+def _min_size(seg: _Seg) -> list[_Seg]:
+    """Too small to be an event → loose. A loose grouping is leftovers, not evidence that anyone was
+    together, so it never mixes owners (§18.3): one loose segment per contributor."""
     if len(seg.items) < WBS["min_event_assets"] and (seg.end - seg.start) < WBS["min_event_minutes"] * 60:
         seg.kind = "loose"
-    return seg
+        contribs = sorted({it.contrib for it in seg.items})
+        if len(contribs) > 1:
+            return [_Seg([it for it in seg.items if it.contrib == c], seg.left_boundary, contiguous=False, kind="loose",
+                         uncertain_ids={it.id for it in seg.items if it.contrib == c} & seg.uncertain_ids) for c in contribs]
+    return [seg]
 
 
 def _adjacent_merge(segs: list[_Seg]) -> list[_Seg]:
@@ -379,15 +432,33 @@ def _adjacent_merge(segs: list[_Seg]) -> list[_Seg]:
 
 
 def _collapse_loose(segs: list[_Seg], tz_offset_s: float) -> list[_Seg]:
-    """Adjacent loose segments on the same local day become one loose grouping."""
+    """Loose segments on the same local day become one loose grouping per person: leftovers merge only
+    with leftovers that share a contributor and (when both carry GPS) lie within contrib_split_m, so
+    two people's unrelated days never end up in one group (§7.4 / §18.3)."""
     out: list[_Seg] = []
     for s in segs:
-        if s.kind == "loose" and out and out[-1].kind == "loose":
-            d1 = math.floor((out[-1].end + tz_offset_s) / 86400)
-            d2 = math.floor((s.start + tz_offset_s) / 86400)
-            if d1 == d2:
-                out[-1].items.extend(s.items)
-                out[-1].contiguous = False
+        if s.kind == "loose":
+            day = math.floor((s.start + tz_offset_s) / 86400)
+            contribs = {it.contrib for it in s.items}
+            gs = _gps_array(s.items)
+            target = None
+            for prev in out:
+                if prev.kind != "loose" or math.floor((prev.end + tz_offset_s) / 86400) != day:
+                    continue
+                if not ({it.contrib for it in prev.items} & contribs):
+                    continue
+                gp = _gps_array(prev.items)
+                if gp.shape[0] and gs.shape[0]:
+                    cp, cs = centroid(gp), centroid(gs)
+                    if haversine_m(cp[0], cp[1], cs[0], cs[1]) > WBS["contrib_split_m"]:
+                        continue
+                target = prev
+                break
+            if target is not None:
+                target.items.extend(s.items)
+                target.items.sort(key=lambda i: i.t)
+                target.contiguous = False
+                target.uncertain_ids |= s.uncertain_ids
                 continue
         out.append(s)
     return out
@@ -489,6 +560,15 @@ def membership_confidence(items: Sequence[Item], center: tuple[float, float] | N
     return out
 
 
+def strong_contributors(items: Sequence[Item], members: Sequence[Membership]) -> set[str]:
+    """§18.3 presence: owners of trusted captures at tier ≥ probable. Mirrors app_refresh_events(); when nobody
+    has evidence (a loose group of received media) every owner keeps their own media reachable."""
+    tier_of = {m.asset_id: m.tier for m in members}
+    strong = {it.contrib for it in items if it.trusted and it.origin == "camera" and tier_of.get(it.id) in ("confirmed", "probable")}
+    trusted = {it.contrib for it in items if it.origin == "camera"}
+    return strong or trusted or {it.contrib for it in items}
+
+
 def tier_for(conf: float) -> str:
     t = WBS["tiers"]
     return "confirmed" if conf >= t["confirmed"] else "probable" if conf >= t["probable"] else "uncertain"
@@ -526,32 +606,55 @@ def segment(items: Sequence[Item], constraints: Constraints | None = None, exist
     if not items:
         return Result([], [], [ev.id for ev in existing])
     frozen = [ev for ev in existing if ev.frozen]
-    voters = [it for it in items if not it.time_uncertain] or list(items)
-    non_voters = [it for it in items if it.time_uncertain] if len(voters) < len(items) else []
+    # §7.4: only trusted captures build the timeline; untrusted media (received, unknown provenance) is
+    # placed afterwards and only where it can be anchored
+    voters = [it for it in items if it.trusted]
+    non_voters = [it for it in items if not it.trusted]
 
-    bounds = score_boundaries(voters, constraints, frozen)
-    bounds_by_left = {b.left_asset: b for b in bounds}
-    segs = _split_at_cuts(voters, bounds)
-    segs = _overlong_cut(segs, bounds_by_left)
-    segs = [s2 for s in segs for s2 in _concurrent_split(s)]
-    segs.sort(key=lambda s: s.start)
-    segs = [_min_size(s) for s in segs]
-    segs = _adjacent_merge(segs)
-    segs = _collapse_loose(segs, tz_offset_s)
+    segs: list[_Seg] = []
+    bounds: list[Boundary] = []
+    if voters:
+        bounds = score_boundaries(voters, constraints, frozen)
+        bounds_by_left = {b.left_asset: b for b in bounds}
+        segs = _split_at_cuts(voters, bounds)
+        segs = _overlong_cut(segs, bounds_by_left)
+        segs = [s2 for s in segs for s2 in _concurrent_split(s)]
+        segs = [s2 for s in segs for s2 in _contributor_split(s)]
+        segs.sort(key=lambda s: s.start)
+        segs = [s2 for s in segs for s2 in _min_size(s)]
+        segs = _adjacent_merge(segs)
+        segs = _collapse_loose(segs, tz_offset_s)
 
-    # place time-uncertain media: containing segment, else nearest within 2 h, else its own loose group
+    # anchors per segment, from its voters only
+    anchor = [({it.contrib for it in s.items}, participants_of(s.items),
+               (lambda g: centroid(g) if g.shape[0] else None)(_gps_array(s.items))) for s in segs]
+    own_loose: dict[tuple[str, int], _Seg] = {}
     for it in non_voters:
-        best, best_d = None, float("inf")
-        for s in segs:
+        best, best_d, best_i = None, float("inf"), -1
+        for i, s in enumerate(segs):
             d = 0.0 if s.start <= it.t <= s.end else min(abs(it.t - s.start), abs(it.t - s.end))
             if d < best_d:
-                best, best_d = s, d
+                best, best_d, best_i = s, d, i
+        anchored = False
         if best is not None and best_d <= 7200:
+            contribs, parts, center = anchor[best_i]
+            anchored = (it.contrib in contribs
+                        or (it.has_gps and center is not None and haversine_m(it.lat, it.lon, center[0], center[1]) <= WBS["anchor_m"])
+                        or bool(it.people & parts))
+        if anchored:
             best.items.append(it)
             best.items.sort(key=lambda i: i.t)
             best.uncertain_ids.add(it.id)
         else:
-            segs.append(_Seg([it], None, contiguous=False, kind="loose", uncertain_ids={it.id}))
+            # nothing ties it to anyone else's night: it stays with its owner, one loose group per local day
+            key = (it.contrib, math.floor((it.t + tz_offset_s) / 86400))
+            if key in own_loose:
+                own_loose[key].items.append(it)
+                own_loose[key].items.sort(key=lambda i: i.t)
+                own_loose[key].uncertain_ids.add(it.id)
+            else:
+                own_loose[key] = _Seg([it], None, contiguous=False, kind="loose", uncertain_ids={it.id})
+    segs.extend(own_loose.values())
     segs.sort(key=lambda s: s.start)
 
     matched = match_ids(segs, existing)
@@ -571,11 +674,22 @@ def segment(items: Sequence[Item], constraints: Constraints | None = None, exist
             mean_emb = mean_emb / max(float(np.linalg.norm(mean_emb)), 1e-9)
         parts = participants_of(s_items)
         conf = membership_confidence(s_items, center, mean_emb, parts) if s.kind == "event" else {i.id: 0.5 for i in s_items}
+        own_n: dict[str, int] = {}
+        for it in s_items:
+            if it.trusted:
+                own_n[it.contrib] = own_n.get(it.contrib, 0) + 1
         members = []
         for it in s_items:
             c = conf[it.id]
             if it.id in s.uncertain_ids:
                 c = min(c, WBS["tiers"]["probable"] - 0.01)
+            elif s.kind == "event" and it.trusted:
+                # a voter that built this segment and is corroborated (own second capture, GPS at the
+                # centre, or a shared face) is at least probable: that is what grants presence (§18.3)
+                near = it.has_gps and center is not None and haversine_m(it.lat, it.lon, center[0], center[1]) <= WBS["anchor_m"]
+                far = it.has_gps and center is not None and haversine_m(it.lat, it.lon, center[0], center[1]) > WBS["contrib_split_m"]
+                if not far and (own_n.get(it.contrib, 0) >= 2 or near or bool(it.people & parts)):
+                    c = max(c, WBS["tiers"]["probable"])
             tier, source = tier_for(c), "auto"
             if it.id in include:
                 tier, source, c = "confirmed", "manual", max(c, WBS["tiers"]["confirmed"])
@@ -596,7 +710,7 @@ def segment(items: Sequence[Item], constraints: Constraints | None = None, exist
             suggested_splits=list(s.suggested_splits),
             confidence=round(max(0.0, min(1.0, conf_event)), 4),
             participants=parts,
-            contributors={it.contrib for it in s_items},
+            contributors=strong_contributors(s_items, members),
             matched_existing=ev.id if ev else None,
         ))
 

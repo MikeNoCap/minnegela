@@ -309,7 +309,9 @@ Photo B (dinner table, no faces, 23:47) sits between A (23:41, Mikkel + Emma) an
 
 1. **Exclude utility media** (`is_utility`): screenshots, documents, memes, images with no camera EXIF *and* a re-encoding signature (WhatsApp/Messenger saves). They are never clustering evidence. They can be *attached* to an event afterwards by time with low confidence, hidden by default.
 2. **Exclude exact duplicates** (one blob, many assets): the blob participates once; all its assets inherit membership.
-3. **Received media**: an asset whose OS creation date is far from its EXIF date (AirDrop keeps EXIF; messenger apps strip it) is flagged `time_uncertain` and gets no vote on boundaries.
+3. **Provenance** (`assets.origin`: `camera` | `received` | `screenshot` | `edited` | `unknown`). The phone's 1600 px preview never carries EXIF, so the server cannot tell a camera photo from a Snapchat save by looking at the bytes; it grades provenance from what the phone knows instead: the file path / album (`DCIM/Camera` vs `Pictures/Snapchat`, `Download`, `WhatsApp Images`…), the filename pattern (`IMG_20250705_003332090` vs `Snapchat-227822819`, `*-WA0001`, `images (3)`), whether the library reports GPS (messengers strip it), and an EXIF summary (make, model, DateTimeOriginal, offset, software) read on the device. The importer grades from the file's own EXIF. Rules live in `packages/shared/src/provenance.ts`.
+   Trust follows the grade: only `camera` media (or an original whose EXIF carries a dated block with offset) is dated by its OS creation time and **votes on boundaries**; everything else carries its download time, is `time_uncertain`, and is placed afterwards **only where it can be anchored**: its owner already has a trusted capture in the segment, its GPS lies within 2 km of the segment centre, or it shows a recognized participant. Unanchored received media stays with its owner in one loose group per local day. Videos follow the same rule (a container `creation_time` is the download time for a Snapchat save).
+   Two contributors whose GPS centroids inside one segment sit more than 5 km apart were not together: the segment is split by contributor (`_contributor_split`), contributors without any GPS staying with the largest group. Loose groupings are leftovers, not evidence of company: a too-small cluster becomes one loose segment **per owner**, and same-day loose leftovers merge only per person.
 4. **Clock offsets**: see §8.2.
 5. **Home location** per user: the densest GPS cluster over all their media (DBSCAN, eps 150 m). Used for trip detection and as a weak prior for concurrent-activity splits.
 
@@ -916,8 +918,8 @@ Next.js App Router, TypeScript, Tailwind, shadcn/ui as a base for forms/dialogs,
 /people                People grid (members, named, unnamed clusters with review queue)
 /people/[id]           Person page; co-appearance chips ("with Emma 41×")
 /places, /places/[id]  Place pages
-/map                   Map with event pins clustered by zoom; time scrubber
-/timeline              Continuous day-by-day scroll (events + loose photos)
+/map                   MapLibre: photo pins that stack by zoom, loose photos as dots, time scrubber with play, events in view
+/timeline              The braid: people as strands, events as knots; follow one strand or several together; quiet runs fold
 /group                 Members, devices, storage, processing status, privacy, audit
 /review                Correction queue: unnamed faces, low-confidence matches, suggested splits/merges
 ```
@@ -956,7 +958,7 @@ There are no per-member sharing settings. Visibility is derived from presence.
 
 **Core rule.** A member `u` (with linked person `p_u`, if enrolled) can see event `e` if and only if at least one holds:
 
-1. **Contributor**: `u` owns at least one asset in `e`'s WBS cluster (`u = any(e.contributor_ids)`).
+1. **Contributor**: `u` owns at least one **camera-origin** asset (§7.4) in `e` at tier `confirmed` or `probable` (`u = any(e.contributor_ids)`). Received media, screenshots and uncertain-tier strays are placed and shown, but they are not evidence that their owner was there and never unlock the event for them. Only when nobody in the event has such evidence (a loose group of received media, single-owner by construction) does every owner count, so people can always reach their own media.
 2. **Participant**: `p_u` is recognized in `e`'s media at `confirmed`, `high` or `probable` tier, or another participant tagged `p_u` on the event (`p_u = any(e.person_ids)`).
 3. **Opened**: a contributor set `e.is_public_to_group = true`.
 

@@ -34,6 +34,11 @@ WBS = {
     "min_event_minutes": 10.0,
     "max_event_hours": 18.0,
     "concurrent": {"min_gps_assets": 6, "eps_m": 500.0, "min_samples": 3, "min_span_minutes": 30.0},
+    # §7.4 provenance: untrusted media joins a segment only when anchored (own voter, GPS within anchor_m of the
+    # centre, or a recognized participant); contributors whose GPS centroids sit further apart than
+    # contrib_split_m were not together and get separate events
+    "anchor_m": 2000.0,
+    "contrib_split_m": 5000.0,
     "moments": {"tau_minutes": 20.0, "eps_m": 150.0, "threshold": 0.5, "tag_coverage": 0.4, "tag_score": 0.6},
     "membership_weights": {"interior": 0.35, "geo": 0.25, "people": 0.20, "visual": 0.10, "support": 0.10},
     "tiers": {"confirmed": 0.85, "probable": 0.6},

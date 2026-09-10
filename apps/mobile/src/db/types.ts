@@ -1,3 +1,5 @@
+import type { CaptureHint } from '@minnegela/shared';
+
 /** §16.2 local index. */
 export type LocalState = 'new' | 'excluded' | 'manifested' | 'preview_uploaded' | 'original_uploaded' | 'skipped' | 'deleted' | 'failed';
 
@@ -19,6 +21,8 @@ export type LocalAsset = {
   albumNames: string[];
   isScreenshot: boolean;
   uri: string;                 // local file uri (ph:// or content://)
+  path: string | null;         // real file path when the platform exposes one (§7.4 provenance)
+  exifHint: CaptureHint | null; // EXIF summary read on the device (§7.4)
   serverAssetId: string | null;
   state: LocalState;
   lastError: string | null;
@@ -37,6 +41,9 @@ export interface LocalDb {
   setState(localId: string, patch: Partial<Pick<LocalAsset, 'state' | 'serverAssetId' | 'md5' | 'lastError' | 'attempts'>>): Promise<void>;
   allLocalIds(): Promise<string[]>;
   markDeletedExcept(presentIds: Set<string>): Promise<LocalAsset[]>;   // returns rows newly marked deleted that had a server id
+  /** Rows already known to the server that have not been re-manifested with provenance signals yet (§7.4). */
+  listRegrade(limit: number): Promise<LocalAsset[]>;
+  markRegraded(localIds: string[]): Promise<void>;
   counts(): Promise<Counts>;
   getSyncState(key: string): Promise<string | null>;
   setSyncState(key: string, value: string | null): Promise<void>;

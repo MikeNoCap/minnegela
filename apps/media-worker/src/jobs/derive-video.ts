@@ -7,6 +7,7 @@ import { STORAGE_KEYS, PREVIEW, THUMB, VIDEO } from '@minnegela/shared';
 import type { Ctx } from '../context.js';
 import { ffprobe, extractFrame, transcode720 } from '../ffmpeg.js';
 import { phash } from '../phash.js';
+import { bestOrigin } from './derive.js';
 import { quality } from '../quality.js';
 import { sha256Hex, extFor, isGroupShaConflict, mergeExactDuplicate, type DerivePayload } from './derive.js';
 
@@ -61,12 +62,15 @@ export async function deriveVideo(ctx: Ctx, payload: DerivePayload, blob: typeof
     const origKey = STORAGE_KEYS.original(g, blobSha, extFor(blob.mime));
     await storage.move(payload.stagingKey, origKey);
 
-    const [asset] = await db.select({ localCreatedAt: assets.localCreatedAt }).from(assets).where(eq(assets.blobId, blob.id)).orderBy(assets.createdAt).limit(1);
+    const assetRows = await db.select({ localCreatedAt: assets.localCreatedAt, origin: assets.origin }).from(assets).where(eq(assets.blobId, blob.id)).orderBy(assets.createdAt);
+    const asset = assetRows[0];
     // raw capture time; devices.clock_offset_s is applied by recluster at read time
     const capturedAt = probe.creationTime ?? asset?.localCreatedAt ?? blob.capturedAt ?? blob.createdAt;
     const update: Partial<typeof blobs.$inferInsert> = {
       width: probe.width || blob.width, height: probe.height || blob.height, durationMs: probe.durationMs,
       capturedAt, lat: probe.lat ?? blob.lat, lon: probe.lon ?? blob.lon,
+      // §7.4: a container creation_time proves nothing (Snapchat writes the download time); only camera-made videos vote
+      timeUncertain: bestOrigin(assetRows.map((a) => a.origin)) !== 'camera',
       previewKey: prevKey, thumbKey, storageKey: origKey, sizeBytes: bytes.length,
       exif: { ...(blob.exif ?? {}), codec: probe.codec, rotation: probe.rotation },
     };

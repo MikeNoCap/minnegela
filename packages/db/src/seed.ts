@@ -49,7 +49,7 @@ export async function seedFixture(db: Db, opts: { groupName?: string } = {}): Pr
       counter++;
       const capturedAt = new Date(startMs + i * 5 * 60_000);
       const [blob] = await db.insert(s.blobs).values({ groupId, mime: 'image/jpeg', width: 1600, height: 1200, capturedAt, sha256: Buffer.from(String(counter).padStart(64, '0'), 'hex'), sizeBytes: 1000, previewKey: `groups/${groupId}/prev/fixture${counter}.jpg`, derivedAt: new Date(), analyzedAt: new Date(), ...extra }).returning();
-      const [asset] = await db.insert(s.assets).values({ groupId, blobId: blob!.id, ownerUserId: uid[owner], deviceId: did[owner], localId: `fixture-${counter}`, localCreatedAt: capturedAt, filename: `IMG_${counter}.jpg` }).returning();
+      const [asset] = await db.insert(s.assets).values({ groupId, blobId: blob!.id, ownerUserId: uid[owner], deviceId: did[owner], localId: `fixture-${counter}`, localCreatedAt: capturedAt, filename: `IMG_${counter}.jpg`, origin: 'camera' }).returning();
       ids.push({ assetId: asset!.id, blobId: blob!.id });
     }
     return ids;

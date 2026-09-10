@@ -143,3 +143,92 @@ def test_moments_split_on_scene_and_label_from_tags():
     ms = moments_for(dinner + out)
     assert len(ms) == 2
     assert [m.label for m in ms] == ["Restaurant", "City street at night"]
+
+
+# ----------------------------------------------------------------------------- §7.4 provenance
+
+def _received(prefix, t, contrib, n=5, loc=None, people=()):
+    """Snapchat saves: no GPS, download-time stamp, untrusted."""
+    return [make(f"{prefix}{i}", t + i * 240, contrib, loc, people, "meme", time_uncertain=True, origin="received") for i in range(n)]
+
+
+def test_received_media_from_an_absent_owner_stays_with_its_owner():
+    items = [Item(**{**i.__dict__, "origin": "camera"}) for i in party()]
+    # k saved five snaps at home while the party ran; nothing ties them to it
+    items += _received("k", ts("2026-03-14", "22:10"), "k")
+    res = segment(items)
+    ev = max(res.events, key=lambda e: len(e.members))
+    assert not any(m.asset_id.startswith("k") for m in ev.members)
+    assert "k" not in ev.contributors
+    loose = [e for e in res.events if e.kind == "loose"]
+    assert len(loose) == 1 and loose[0].contributors == {"k"} and len(loose[0].members) == 5
+
+
+def test_received_media_joins_when_anchored_by_own_capture_gps_or_face():
+    base = [Item(**{**i.__dict__, "origin": "camera"}) for i in party()]
+    # e is a party contributor: her snaps from the night join as uncertain
+    own = _received("e", ts("2026-03-14", "22:10"), "e", n=2)
+    # a photo saved with GPS at the party
+    gps = _received("g", ts("2026-03-14", "22:20"), "g", n=1, loc=OSLO)
+    # a snap of participant 1, saved by someone who was not there
+    face = _received("f", ts("2026-03-14", "22:30"), "f", n=1, people=(1,))
+    res = segment(base + own + gps + face)
+    ev = max(res.events, key=lambda e: len(e.members))
+    got = ids(ev)
+    assert {"e0", "e1", "g0", "f0"} <= got
+    assert all(m.tier == "uncertain" for m in ev.members if m.asset_id in {"e0", "e1", "g0", "f0"})
+    # placement is not presence: only e was shown to be there
+    assert "e" in ev.contributors and "g" not in ev.contributors and "f" not in ev.contributors
+
+
+def test_concurrent_contributors_far_apart_get_separate_events():
+    t0 = ts("2026-07-08", "20:00")
+    # m photographs at home in Oslo, j in Vienna, interleaved every 10 min; too few GPS points for the DBSCAN split
+    items = []
+    for i in range(6):
+        items.append(make(f"m{i}", t0 + i * 600, "m", OSLO if i % 2 == 0 else None, (), "home", origin="camera"))
+        items.append(make(f"j{i}", t0 + i * 600 + 300, "j", (48.2, 16.4) if i % 2 == 0 else None, (), "vienna", origin="camera"))
+    res = segment(items)
+    by_contrib = {frozenset(e.contributors) for e in res.events}
+    assert by_contrib == {frozenset({"m"}), frozenset({"j"})}, [(e.kind, sorted(e.contributors), sorted(ids(e))) for e in res.events]
+    assert all(len(e.members) == 6 for e in res.events)
+
+
+def test_without_any_trusted_capture_every_owner_keeps_a_loose_group_of_their_own():
+    t0 = ts("2026-09-23", "08:00")
+    items = _received("a", t0, "a", n=4) + _received("b", t0 + 60, "b", n=4)
+    res = segment(items)
+    assert len(res.events) == 2
+    assert {frozenset(e.contributors) for e in res.events} == {frozenset({"a"}), frozenset({"b"})}
+    assert all(e.kind == "loose" for e in res.events)
+
+
+def test_a_lone_gpsless_stray_from_someone_else_does_not_grant_presence():
+    items = [Item(**{**i.__dict__, "origin": "camera"}) for i in party()]
+    # one camera photo by k at 22:40, no GPS, no faces, different scene
+    items.append(make("stray", ts("2026-03-14", "22:40"), "k", None, (), "kitchen", origin="camera"))
+    res = segment(items)
+    ev = max(res.events, key=lambda e: len(e.members))
+    m = next(mm for mm in ev.members if mm.asset_id == "stray")
+    assert m.tier == "uncertain", m
+    assert "k" not in ev.contributors
+
+
+def test_loose_leftovers_collapse_per_person_not_across_owners():
+    t0 = ts("2026-07-02", "12:00")
+    # two singletons each from m (Oslo) and j (Vienna) on the same day: one loose group per person
+    items = [make("m0", t0, "m", OSLO, (), "a", origin="camera"), make("j0", t0 + 1800, "j", (48.2, 16.4), (), "b", origin="camera"),
+             make("m1", t0 + 5 * 3600, "m", OSLO, (), "c", origin="camera"), make("j1", t0 + 5 * 3600 + 1800, "j", (48.2, 16.4), (), "d", origin="camera")]
+    res = segment(items)
+    assert all(e.kind == "loose" for e in res.events)
+    assert {frozenset(e.contributors) for e in res.events} == {frozenset({"m"}), frozenset({"j"})}
+    assert {frozenset(ids(e)) for e in res.events} == {frozenset({"m0", "m1"}), frozenset({"j0", "j1"})}
+
+
+def test_a_tiny_mixed_cluster_becomes_one_loose_group_per_owner():
+    t0 = ts("2025-10-31", "12:03")
+    items = [make("j0", t0, "j", OSLO, (), "a", origin="camera"),
+             make("m0", t0 + 90, "m", None, (), "b", origin="camera")]   # m: one photo, no GPS, no faces
+    res = segment(items)
+    assert all(e.kind == "loose" for e in res.events)
+    assert {frozenset(e.contributors) for e in res.events} == {frozenset({"j"}), frozenset({"m"})}

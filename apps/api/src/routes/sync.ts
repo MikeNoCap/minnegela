@@ -8,6 +8,10 @@ import { extFor } from '../storage.js';
 import { audit } from '../audit.js';
 import { badRequest, notFound } from '../errors.js';
 import { rows, asDate, uuidArr } from '../dto.js';
+import { classifyOrigin, type ManifestItem } from '@minnegela/shared';
+
+/** §7.4 provenance grade from what the phone knows; it decides trust (derive) and presence (trigger). */
+const originFor = (item: ManifestItem) => classifyOrigin({ filename: item.filename, albums: item.albums, path: item.path, mime: item.mime, hasGps: !!item.gps, isScreenshot: item.isScreenshot, exif: item.exif });
 
 const G = z.object({ g: z.string().uuid() });
 const ID = z.object({ id: z.string().uuid() });
@@ -50,10 +54,22 @@ export async function syncRoutes(app: FastifyInstance, ctx: AppContext) {
       if (!dev) throw notFound('device_not_found', 'Device not found');
       const results: ManifestResponseT['results'] = [];
       for (const item of req.body.assets) {
-        const [existing] = await rows<{ id: string; blob_id: string; preview_uploaded_at: Date | null; original_uploaded_at: Date | null; preview_key: string | null; storage_key: string | null; mime: string }>(tx, sql`
-          select a.id, a.blob_id, a.preview_uploaded_at, a.original_uploaded_at, b.preview_key, b.storage_key, b.mime
+        const [existing] = await rows<{ id: string; blob_id: string; preview_uploaded_at: Date | null; original_uploaded_at: Date | null; preview_key: string | null; storage_key: string | null; mime: string; origin: string }>(tx, sql`
+          select a.id, a.blob_id, a.preview_uploaded_at, a.original_uploaded_at, b.preview_key, b.storage_key, b.mime, a.origin
           from assets a join blobs b on b.id = a.blob_id where a.device_id = ${dev.id}::uuid and a.local_id = ${item.localId} and a.deleted_at is null`);
         if (existing) {
+          // Re-manifest with provenance signals (a newer app, a re-walk): regrade. The importer's
+          // originals-only items carry no filename and are not a regrade.
+          if (item.filename !== undefined) {
+            const origin = originFor(item);
+            await tx.update(assets).set({ origin, captureHint: item.exif ?? null, albumNames: item.albums, filename: item.filename }).where(sql`${assets.id} = ${existing.id}::uuid`);
+            if (origin !== existing.origin && existing.storage_key === null) {
+              // no original yet: the blob's trust came from the old grade; refresh it and re-place the blob
+              await tx.execute(sql`update blobs set time_uncertain = ${origin !== 'camera'}, is_utility = (is_utility or ${origin === 'screenshot'}) where id = ${existing.blob_id}::uuid`);
+              const t = Date.parse(item.createdAt);
+              await enqueue(tx, 'recluster', { groupId: v.groupId, from: new Date(t - WBS.reclusterPadHours * 3600_000).toISOString(), to: new Date(t + WBS.reclusterPadHours * 3600_000).toISOString() }, { runAfterSeconds: WBS.reclusterDebounceSeconds });
+            }
+          }
           const hasPreview = existing.preview_uploaded_at !== null || existing.preview_key !== null;
           const hasOriginal = existing.original_uploaded_at !== null || existing.storage_key !== null;
           if (!hasPreview) {
@@ -68,6 +84,7 @@ export async function syncRoutes(app: FastifyInstance, ctx: AppContext) {
           continue;
         }
         const md5 = item.md5 ? Buffer.from(item.md5, 'hex') : null;
+        const origin = originFor(item);
         let blobId: string | null = null;
         let skip = false;
         if (md5) {
@@ -81,11 +98,13 @@ export async function syncRoutes(app: FastifyInstance, ctx: AppContext) {
             id: blobId, groupId: v.groupId, mime: item.mime, md5, sizeBytes: item.size, width: item.w ?? null, height: item.h ?? null,
             durationMs: item.dur !== undefined ? Math.round(item.dur * 1000) : null, capturedAt: new Date(item.createdAt),
             lat: item.gps?.lat ?? null, lon: item.gps?.lon ?? null, gpsAccuracyM: item.gps?.accuracyM ?? null,
+            timeUncertain: origin !== 'camera', isUtility: origin === 'screenshot',
           });
         }
         const [a] = await tx.insert(assets).values({
           groupId: v.groupId, blobId, ownerUserId: v.userId, deviceId: dev.id, localId: item.localId, filename: item.filename ?? null,
           albumNames: item.albums, localCreatedAt: new Date(item.createdAt), localModifiedAt: item.modifiedAt ? new Date(item.modifiedAt) : null, isFavorite: item.isFavorite,
+          origin, captureHint: item.exif ?? null,
           previewUploadedAt: skip ? new Date() : null,
         }).returning({ id: assets.id });
         if (skip) {
